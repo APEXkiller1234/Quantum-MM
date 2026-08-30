@@ -23,6 +23,7 @@ TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G6WRHu.Vp9ZvOW4ZNSe0RsFBqJ99f5Pw5_OnBZAqt3N3
 YOUR_USER = 1506688372045910227 # Your User ID
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
 MM_TOS_CHANNEL = 1543637611070095421 # Auto Middleman ToS Channel ID
+AUTOMM_TRADE_CHANNEL = 1480211838317629541 # Channel linked in !autommtos ("start a trade here")
 TICKET_CATEGORY = 1543637510264061992 # Auto Middleman Tickets Category ID
 TRANSCRIPT_CHANNEL = 1543639036017508372 # Auto Middleman Tickets Logging Channel ID
 COMPLETED_TRANSACTION_CHANNEL = 1543639026605625354 # Completed Auto Middleman Embeds Channel ID
@@ -123,8 +124,10 @@ DATA_LOCK = asyncio.Lock()
 JACES_ASSETS_DIR = Path("jaces_assets")
 JACES_LOCK = asyncio.Lock()
 JACES_PERM_CONCURRENCY = 8
+JACES_RATE_RETRY_SECONDS = 15
 JACES_REASON_ON = "Jaces mode"
 JACES_REASON_OFF = "Jaces mode revert"
+JACES_RATE_WAIT_UNTIL = 0.0
 
 TICKET_LOCKS = {}
 MONITOR_TASKS = {}
@@ -8402,6 +8405,68 @@ class CloseTicketView(
 
 
 
+
+def automm_tos_notice_text():
+    return (
+        f"> The ToS in {get_channel_mention(MM_TOS_CHANNEL)} also apply here.\n"
+        "> You can start a trade with the Automatic MM Bot here: "
+        f"{get_channel_mention(AUTOMM_TRADE_CHANNEL)}"
+    )
+
+
+def automm_tos_embed():
+    return discord.Embed(
+        description=(
+            "While using our Automatic Middleman Bot, you must agree to a few things.\n"
+            "\n"
+            "`1` We are not responsible for any losses caused by user mistakes, such as sending funds to the wrong address or network, entering incorrect amounts/addresses, discord account getting compromised, etc.\n"
+            "\n"
+            "`2` We are not responsible for losses caused by third-party interruptions, such as rollbacks, terminations, or duped items.\n"
+            "\n"
+            "`3` Trades involving prohibited items (e.g., Nitro, Gift Cards / Codes, Accounts, Joins, Scripts, Methods, Discord Assets, Suppliers, Contacts, Websites, Files, Links, UGC, KYC, Auths, Phone Numbers, Credentials, Services, Advertisements, Subscriptions) are not allowed.\n"
+            "\n"
+            "`•` We are not responsible for any consequences if such trades proceed, and we will not provide support for prohibited trades in case of a dispute.\n"
+            "\n"
+            "`4` Disputes are handled fairly; however, if a party is inactive or uncooperative, funds may be released to the other trader. Traders (usually the Receiver) have 24 hours to respond to a cancellation request before funds are returned to the Sender.\n"
+            "\n"
+            "`5` You may impose your own ToS/rules/warranties for deals, but they must be stated in the ticket via your own message **BEFORE** the deal starts, and explicitly agreed to by your trader. If your trader does not notice or agree to them, they do not apply. Edited ToS messages especially in DMs will be voided.\n"
+            "\n"
+            "`•` You cannot impose absurd, illegal (by law), or predatory rules. Our ToS and judgment overrule yours if we deem them unreasonable or illogical.\n"
+            "\n"
+            "`•` You cannot refuse to refund a refundable payment (mostly exchangers). If your trader gives you something that was not as described and you are able to refund it, you must do so.\n"
+            "\n"
+            "`•` Any third-party fees incurred during a refund (e.g. network/app handling fees, NOT your own personal fee) shall be covered by the other trader.\n"
+            "\n"
+            "`6` For currency trades (Crypto, PayPal, Robux, etc.), fees and taxes must be agreed upon beforehand. The receiver is entitled to the full agreed amount unless otherwise stated."
+        ),
+        colour=COLOR_NEUTRAL
+    )
+
+
+class AutoMMTosView(
+    discord.ui.View
+):
+    def __init__(self):
+        super().__init__(
+            timeout=None
+        )
+
+    @discord.ui.button(
+        label="View ToS",
+        style=discord.ButtonStyle.primary,
+        custom_id="jace_mm_view_tos"
+    )
+    async def view_tos(
+        self,
+        interaction,
+        button
+    ):
+        await interaction.response.send_message(
+            embed=automm_tos_embed(),
+            ephemeral=True
+        )
+
+
 def default_jaces_guild_state():
     return {
         "active": False,
@@ -8622,6 +8687,90 @@ def branding_has_values(profile):
     )
 
 
+async def wait_for_jaces_rate_gate():
+    while True:
+        delay = JACES_RATE_WAIT_UNTIL - time.monotonic()
+        if delay <= 0:
+            return
+        await asyncio.sleep(delay)
+
+
+async def trip_jaces_rate_gate(seconds):
+    global JACES_RATE_WAIT_UNTIL
+
+    wait = max(
+        float(JACES_RATE_RETRY_SECONDS),
+        float(seconds or 0)
+    )
+    until = time.monotonic() + wait
+    if until > JACES_RATE_WAIT_UNTIL:
+        JACES_RATE_WAIT_UNTIL = until
+
+    log_action(
+        "jaces_rate_limited",
+        retry_in=int(wait)
+    )
+    await asyncio.sleep(wait)
+
+
+def rate_limit_retry_after(error):
+    retry = getattr(error, "retry_after", None)
+    if retry is not None:
+        try:
+            return max(
+                float(JACES_RATE_RETRY_SECONDS),
+                float(retry)
+            )
+        except (TypeError, ValueError):
+            pass
+
+    response = getattr(error, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    raw = None
+    if hasattr(headers, "get"):
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is not None:
+        try:
+            return max(
+                float(JACES_RATE_RETRY_SECONDS),
+                float(raw)
+            )
+        except (TypeError, ValueError):
+            pass
+
+    return float(JACES_RATE_RETRY_SECONDS)
+
+
+def is_discord_rate_limit(error):
+    rate_limited = getattr(discord, "RateLimited", None)
+    if rate_limited is not None and isinstance(error, rate_limited):
+        return True
+
+    return (
+        isinstance(error, discord.HTTPException)
+        and getattr(error, "status", None) == 429
+    )
+
+
+async def call_until_not_rate_limited(label, func):
+    while True:
+        await wait_for_jaces_rate_gate()
+        try:
+            return await func()
+        except Exception as error:
+            if not is_discord_rate_limit(error):
+                raise
+
+            log_action(
+                "jaces_rate_limited_retry",
+                action=label,
+                retry_in=int(rate_limit_retry_after(error))
+            )
+            await trip_jaces_rate_gate(
+                rate_limit_retry_after(error)
+            )
+
+
 def clone_permission_overwrite(overwrite):
     if overwrite is None:
         return discord.PermissionOverwrite()
@@ -8653,10 +8802,13 @@ async def set_view_channel_only(channel, target, value, reason):
     overwrite.view_channel = desired
 
     try:
-        await channel.set_permissions(
-            target,
-            overwrite=overwrite,
-            reason=reason
+        await call_until_not_rate_limited(
+            f"view_channel:{getattr(channel, 'id', channel)}",
+            lambda: channel.set_permissions(
+                target,
+                overwrite=overwrite,
+                reason=reason
+            )
         )
     except discord.HTTPException as error:
         return f"error:{error}"
@@ -8679,7 +8831,10 @@ async def resolve_guild_channel(guild, channel_id):
         return channel
 
     try:
-        fetched = await bot.fetch_channel(channel_id)
+        fetched = await call_until_not_rate_limited(
+            f"fetch_channel:{channel_id}",
+            lambda: bot.fetch_channel(channel_id)
+        )
     except discord.HTTPException:
         return None
 
@@ -8694,7 +8849,7 @@ async def resolve_guild_channel(guild, channel_id):
 
 async def apply_one_edit(label, editor):
     try:
-        await editor()
+        await call_until_not_rate_limited(label, editor)
         return f"{label} updated"
     except TypeError as error:
         return f"{label} failed: {error}"
@@ -9106,6 +9261,10 @@ class JaceBot(
 
         self.add_view(
             CloseTicketView()
+        )
+
+        self.add_view(
+            AutoMMTosView()
         )
 
     async def close(self):
@@ -10367,6 +10526,73 @@ async def show_saved_channels_slash(
         ephemeral=True
     )
 
+
+
+@bot.command(name="autommtos")
+@commands.guild_only()
+async def autommtos(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    await ctx.channel.send(
+        content=automm_tos_notice_text(),
+        view=AutoMMTosView()
+    )
+
+    log_action(
+        "automm_tos_posted",
+        user=f"{ctx.author}({ctx.author.id})",
+        channel=f"{ctx.channel}({ctx.channel.id})"
+    )
+
+
+@bot.tree.command(
+    name="autommtos",
+    description="Post the Automatic MM ToS notice with a View ToS button"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def autommtos_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    if interaction.channel is None:
+        await interaction.response.send_message(
+            "Use this in a server channel.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        "ToS notice posted.",
+        ephemeral=True
+    )
+
+    try:
+        await interaction.channel.send(
+            content=automm_tos_notice_text(),
+            view=AutoMMTosView()
+        )
+    except discord.HTTPException:
+        await interaction.followup.send(
+            "The ToS notice could not be posted in this channel.",
+            ephemeral=True
+        )
+        return
+
+    log_action(
+        "automm_tos_posted",
+        user=f"{interaction.user}({interaction.user.id})",
+        channel=f"{interaction.channel}({interaction.channel.id})"
+    )
 
 @bot.tree.error
 async def app_command_error(
