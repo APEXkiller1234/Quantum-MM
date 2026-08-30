@@ -5924,14 +5924,13 @@ class MiddlemanPanel(
                 f"{H1} "
                 "Jace's Auto Middleman"
             ),
+            discord.ui.TextDisplay(
+                "• **Paid Service**\n"
+                "\n"
+                "• Read our ToS before using the bot: "
+                f"{get_channel_mention(TOS_CHANNEL)}"
+            ),
             accessory=tutorial_button
-        )
-
-        intro = discord.ui.TextDisplay(
-            "• **Paid Service**\n"
-            "\n"
-            "• Read our ToS before using the bot: "
-            f"{get_channel_mention(TOS_CHANNEL)}"
         )
 
         fees = discord.ui.TextDisplay(
@@ -5947,7 +5946,6 @@ class MiddlemanPanel(
         main_container = (
             discord.ui.Container(
                 header,
-                intro,
                 discord.ui.Separator(
                     visible=True,
                     spacing=discord.SeparatorSpacing.small
@@ -5978,7 +5976,8 @@ class MiddlemanPanel(
                     f"{H1} "
                     f"{USDT_EMOJI} "
                     "• Request USDT [BEP-20] • "
-                    f"{USDT_EMOJI}\n\n"
+                    f"{USDT_EMOJI}\n"
+                    "\n"
                     "• Network: **BSC (BEP-20)**"
                 ),
                 discord.ui.ActionRow(
@@ -6006,12 +6005,19 @@ class MiddlemanPanel(
             else "Biggest Trade"
         )
 
-        self.add_item(
-            discord.ui.TextDisplay(
-                f"{biggest_trade_label}: "
-                f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
-                f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
+        biggest_trade_container = (
+            discord.ui.Container(
+                discord.ui.TextDisplay(
+                    f"{biggest_trade_label}: "
+                    f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
+                    f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
+                ),
+                accent_colour=COLOR_NEUTRAL
             )
+        )
+
+        self.add_item(
+            biggest_trade_container
         )
 
 
