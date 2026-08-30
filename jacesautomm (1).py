@@ -62,7 +62,7 @@ DEMO_RECENT_BLOCK_WINDOW = 500
 
 STARTING_TICKET_NUMBER = 12077
 
-BIGGEST_TRADE_USD = 24468 # Biggest completed trade amount shown on the panel footer
+BIGGEST_TRADE_USD = 29996 # Biggest completed trade amount shown on the panel footer
 BIGGEST_TRADE_MESSAGE_URL = "" # Message link to the biggest completed trade (e.g. https://discord.com/channels/guild/channel/message)
 
 
@@ -1804,6 +1804,264 @@ async def get_configured_channel(
         return None
 
 
+def cached_ticket_channel(
+    guild,
+    channel_id
+):
+    if channel_id is None:
+        return None
+
+    channel_id = int(
+        channel_id
+    )
+
+    channel = bot.get_channel(
+        channel_id
+    )
+
+    if channel is not None:
+        return channel
+
+    if guild is None:
+        return None
+
+    channel = guild.get_channel(
+        channel_id
+    )
+
+    if channel is not None:
+        return channel
+
+    return guild.get_thread(
+        channel_id
+    )
+
+
+def is_private_thread_parent(
+    channel
+):
+    return (
+        isinstance(
+            channel,
+            discord.TextChannel
+        )
+        and not isinstance(
+            channel,
+            discord.Thread
+        )
+    )
+
+
+def thread_parent_from(
+    channel
+):
+    if isinstance(
+        channel,
+        discord.Thread
+    ):
+        return channel.parent
+
+    return channel
+
+
+async def prepare_ticket_thread(
+    channel
+):
+    if not isinstance(
+        channel,
+        discord.Thread
+    ):
+        return channel
+
+    try:
+        if (
+            channel.archived
+            or not channel.locked
+        ):
+            await channel.edit(
+                archived=False,
+                locked=True
+            )
+
+    except discord.HTTPException:
+        pass
+
+    return channel
+
+
+async def resolve_ticket_channel(
+    ticket
+):
+    channel_id = int(
+        ticket[
+            "channel_id"
+        ]
+    )
+
+    guild = bot.get_guild(
+        int(
+            ticket[
+                "guild_id"
+            ]
+        )
+    )
+
+    channel = cached_ticket_channel(
+        guild,
+        channel_id
+    )
+
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(
+                channel_id
+            )
+
+        except discord.HTTPException:
+            return None
+
+    return await prepare_ticket_thread(
+        channel
+    )
+
+
+async def get_ticket_thread_parent(
+    interaction
+):
+    guild = interaction.guild
+    configured = None
+
+    if guild is not None:
+        configured = guild.get_channel(
+            TICKET_CATEGORY
+        )
+
+        if configured is None:
+            try:
+                configured = await bot.fetch_channel(
+                    TICKET_CATEGORY
+                )
+
+            except discord.HTTPException:
+                configured = None
+
+    if is_private_thread_parent(
+        configured
+    ):
+        return configured
+
+    parent = thread_parent_from(
+        interaction.channel
+    )
+
+    if is_private_thread_parent(
+        parent
+    ):
+        return parent
+
+    return None
+
+
+async def ensure_parent_access(
+    parent,
+    opener,
+    trader
+):
+    for member in (
+        opener,
+        trader
+    ):
+        if member is None:
+            continue
+
+        permissions = parent.permissions_for(
+            member
+        )
+
+        if permissions.view_channel:
+            continue
+
+        try:
+            await parent.set_permissions(
+                member,
+                view_channel=True,
+                read_message_history=True,
+                send_messages=False,
+                send_messages_in_threads=False,
+                create_public_threads=False,
+                create_private_threads=False,
+                add_reactions=False,
+                attach_files=False,
+                embed_links=False
+            )
+
+        except discord.HTTPException:
+            logger.exception(
+                "Failed to grant ticket parent access to %s(%s)",
+                member,
+                member.id
+            )
+
+
+async def create_ticket_thread(
+    parent,
+    name,
+    reason
+):
+    last_error = None
+
+    for duration in (
+        10080,
+        4320,
+        1440,
+        60
+    ):
+        try:
+            return await parent.create_thread(
+                name=name,
+                type=discord.ChannelType.private_thread,
+                invitable=False,
+                auto_archive_duration=duration,
+                reason=reason
+            )
+
+        except discord.HTTPException as error:
+            last_error = error
+
+    if last_error is not None:
+        raise last_error
+
+    raise RuntimeError(
+        "Failed to create private ticket thread"
+    )
+
+
+async def add_ticket_thread_members(
+    thread,
+    opener,
+    trader
+):
+    for member in (
+        opener,
+        trader
+    ):
+        if member is None:
+            continue
+
+        try:
+            await thread.add_user(
+                member
+            )
+
+        except discord.HTTPException:
+            logger.exception(
+                "Failed to add %s(%s) to ticket thread %s",
+                member,
+                member.id,
+                thread.id
+            )
+
+
 def role_selection_embed(ticket):
     asset = get_asset_name(
         ticket
@@ -2997,20 +3255,8 @@ async def handle_deposit_detected(
         source="blockchain"
     )
 
-    guild = bot.get_guild(
-        int(
-            ticket[
-                "guild_id"
-            ]
-        )
-    )
-
-    channel = (
-        guild.get_channel(
-            channel_id
-        )
-        if guild
-        else None
+    channel = await resolve_ticket_channel(
+        ticket
     )
 
     if channel is None:
@@ -3176,20 +3422,8 @@ async def handle_deposit_confirmed(ticket):
         )
     )
 
-    guild = bot.get_guild(
-        int(
-            ticket[
-                "guild_id"
-            ]
-        )
-    )
-
-    channel = (
-        guild.get_channel(
-            channel_id
-        )
-        if guild
-        else None
+    channel = await resolve_ticket_channel(
+        ticket
     )
 
     if channel is None:
@@ -3660,20 +3894,8 @@ async def monitor_ticket(channel_id):
                     - started
                     >= UNPAID_TIMEOUT_SECONDS
                 ):
-                    guild = bot.get_guild(
-                        int(
-                            ticket[
-                                "guild_id"
-                            ]
-                        )
-                    )
-
-                    channel = (
-                        guild.get_channel(
-                            channel_id
-                        )
-                        if guild
-                        else None
+                    channel = await resolve_ticket_channel(
+                        ticket
                     )
 
                     if channel is not None:
@@ -3860,20 +4082,8 @@ async def run_countdown(
                 )
             )
 
-            guild = bot.get_guild(
-                int(
-                    ticket[
-                        "guild_id"
-                    ]
-                )
-            )
-
-            channel = (
-                guild.get_channel(
-                    channel_id
-                )
-                if guild
-                else None
+            channel = await resolve_ticket_channel(
+                ticket
             )
 
             if channel is None:
@@ -4440,12 +4650,8 @@ async def send_completion_outputs(ticket):
     if guild is None:
         return
 
-    ticket_channel = guild.get_channel(
-        int(
-            ticket[
-                "channel_id"
-            ]
-        )
+    ticket_channel = await resolve_ticket_channel(
+        ticket
     )
 
     if (
@@ -4797,6 +5003,10 @@ async def close_ticket_channel(
         reason=reason
     )
 
+    channel = await prepare_ticket_thread(
+        channel
+    )
+
     guild = channel.guild
 
     transcript_channel = (
@@ -5064,16 +5274,13 @@ class RequestModal(
 
             return
 
-        category = interaction.guild.get_channel(
-            TICKET_CATEGORY
+        parent = await get_ticket_thread_parent(
+            interaction
         )
 
-        if not isinstance(
-            category,
-            discord.CategoryChannel
-        ):
+        if parent is None:
             await interaction.followup.send(
-                "The configured ticket category could not be found.",
+                "Private ticket threads can only be created from a text channel.",
                 ephemeral=True
             )
 
@@ -5089,81 +5296,43 @@ class RequestModal(
             f"{number}"
         )
 
-        bot_member = interaction.guild.me
-
-        overwrites = {
-            interaction.guild.default_role:
-                discord.PermissionOverwrite(
-                    view_channel=False
-                ),
-
-            opener:
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    read_message_history=True,
-                    send_messages=False,
-                    add_reactions=False,
-                    attach_files=False,
-                    embed_links=False,
-                    create_public_threads=False,
-                    create_private_threads=False,
-                    send_messages_in_threads=False
-                ),
-
-            trader:
-                discord.PermissionOverwrite(
-                    view_channel=True,
-                    read_message_history=True,
-                    send_messages=False,
-                    add_reactions=False,
-                    attach_files=False,
-                    embed_links=False,
-                    create_public_threads=False,
-                    create_private_threads=False,
-                    send_messages_in_threads=False
-                )
-        }
-
-        if bot_member is not None:
-            overwrites[
-                bot_member
-            ] = discord.PermissionOverwrite(
-                view_channel=True,
-                read_message_history=True,
-                send_messages=True,
-                manage_channels=True,
-                manage_messages=True,
-                attach_files=True,
-                embed_links=True
-            )
-
-        topic = (
-            f"jace-mm|"
-            f"number={number}|"
-            f"opener={opener.id}|"
-            f"trader={trader.id}|"
-            f"type={self.ticket_type}"
+        await ensure_parent_access(
+            parent,
+            opener,
+            trader
         )
 
         try:
-            channel = await interaction.guild.create_text_channel(
-                name=channel_name,
-                category=category,
-                overwrites=overwrites,
-                topic=topic,
-                reason=(
+            channel = await create_ticket_thread(
+                parent,
+                channel_name,
+                (
                     f"Middleman ticket {number}"
                 )
             )
 
+            try:
+                await channel.edit(
+                    locked=True
+                )
+
+            except discord.HTTPException:
+                pass
+
+            await add_ticket_thread_members(
+                channel,
+                opener,
+                trader
+            )
+
         except discord.HTTPException:
             logger.exception(
-                "Failed to create ticket channel"
+                "Failed to create ticket thread"
             )
 
             await interaction.followup.send(
                 "Discord rejected the ticket creation request. "
-                "Check the bot's channel permissions.",
+                "Check the bot's Create Private Threads and Manage Threads permissions.",
                 ephemeral=True
             )
 
@@ -5755,27 +5924,30 @@ class MiddlemanPanel(
                 f"{H1} "
                 "Jace's Auto Middleman"
             ),
-            discord.ui.TextDisplay(
-                "• **Paid Service**\n"
-                "\n"
-                "• Read our ToS before using the bot: "
-                f"{get_channel_mention(TOS_CHANNEL)}"
-            ),
             accessory=tutorial_button
         )
 
+        intro = discord.ui.TextDisplay(
+            "• **Paid Service**\n"
+            "\n"
+            "• Read our ToS before using the bot: "
+            f"{get_channel_mention(TOS_CHANNEL)}"
+        )
+
         fees = discord.ui.TextDisplay(
-            f"{H2} Fees:\n\n"
+            f"{H2} Fees:\n"
+            "\n"
             "• Deals $250+: $1.50\n"
             "\n"
             "• Deals under $250: $0.50\n"
             "\n"
-            "• Deals under $50 are **FREE**"
+            "• Deals under $50 are __FREE__"
         )
 
         main_container = (
             discord.ui.Container(
                 header,
+                intro,
                 discord.ui.Separator(
                     visible=True,
                     spacing=discord.SeparatorSpacing.small
@@ -8615,24 +8787,8 @@ async def mark_deposit(
 
         return
 
-    guild = bot.get_guild(
-        int(
-            ticket[
-                "guild_id"
-            ]
-        )
-    )
-
-    channel = (
-        guild.get_channel(
-            int(
-                ticket[
-                    "channel_id"
-                ]
-            )
-        )
-        if guild
-        else None
+    channel = await resolve_ticket_channel(
+        ticket
     )
 
     if channel is None:
@@ -9221,6 +9377,19 @@ def validate_config():
 
     if errors:
         raise RuntimeError(
+            "Configure the following values before starting the bot: "
+            + ", ".join(
+                errors
+            )
+        )
+
+
+validate_config()
+
+bot.run(
+    TOKEN
+)
+eError(
             "Configure the following values before starting the bot: "
             + ", ".join(
                 errors
