@@ -8622,27 +8622,42 @@ def branding_has_values(profile):
     )
 
 
-async def set_view_channel_only(channel, target, value, reason):
-    current = channel.overwrites_for(target)
+def clone_permission_overwrite(overwrite):
+    if overwrite is None:
+        return discord.PermissionOverwrite()
 
-    if current.view_channel is value:
+    allow, deny = overwrite.pair()
+    return discord.PermissionOverwrite.from_pair(allow, deny)
+
+
+def overwrite_for_target(channel, target):
+    overwrites = getattr(channel, "overwrites", None) or {}
+    target_id = getattr(target, "id", None)
+
+    for obj, overwrite in overwrites.items():
+        if getattr(obj, "id", None) == target_id:
+            return overwrite
+
+    return None
+
+
+async def set_view_channel_only(channel, target, value, reason):
+    overwrite = clone_permission_overwrite(
+        overwrite_for_target(channel, target)
+    )
+    desired = bool(value)
+
+    if overwrite.view_channel is desired:
         return "skipped"
 
-    current.view_channel = value
+    overwrite.view_channel = desired
 
     try:
-        if current.is_empty():
-            await channel.set_permissions(
-                target,
-                overwrite=None,
-                reason=reason
-            )
-        else:
-            await channel.set_permissions(
-                target,
-                overwrite=current,
-                reason=reason
-            )
+        await channel.set_permissions(
+            target,
+            overwrite=overwrite,
+            reason=reason
+        )
     except discord.HTTPException as error:
         return f"error:{error}"
 
@@ -9948,7 +9963,7 @@ async def reply_missing_jaces_admin(interaction):
 async def save_marked_channel(guild, channel, list_key, other_key):
     ok, error = saveable_guild_channel(channel)
     if not ok:
-        return None, error
+        return False, error, None, None
 
     async with JACES_LOCK:
         state = jaces_guild_state(guild.id)
@@ -9958,33 +9973,117 @@ async def save_marked_channel(guild, channel, list_key, other_key):
             other_key,
             channel.id
         )
+        active = bool(state.get("active"))
         await save_data()
 
-    return True, None
+        visible = (
+            active
+            if list_key == "show_channel_ids"
+            else (not active)
+        )
+        perm_result = await apply_everyone_view(
+            channel,
+            visible,
+            JACES_REASON_ON if active else JACES_REASON_OFF
+        )
+
+    return True, None, visible, perm_result
 
 
-def savejaces_embed(channel):
+def view_update_text(visible, perm_result):
+    visibility = (
+        "Hidden from @everyone"
+        if not visible
+        else "Shown to @everyone"
+    )
+    extra = ""
+    if perm_result and str(perm_result).startswith("error:"):
+        extra = (
+            "\nView Channel could not be updated: "
+            f"{str(perm_result)[6:]}"
+        )
+
+    return (
+        f"{visibility} (`View Channel` only). "
+        "Every other permission is unchanged."
+        f"{extra}"
+    )
+
+
+def savejaces_embed(channel, visible, perm_result):
     return discord.Embed(
         description=(
             f"{emoji_text(GREEN_TICK_EMOJI)}"
             f"Saved {channel.mention} for `/jaces`.\n"
-            "`/jaces` shows it. `/nonjaces` hides it. "
-            "View Channel only."
+            f"{view_update_text(visible, perm_result)}\n"
+            "`/jaces` shows it. `/nonjaces` hides it."
         ),
         colour=COLOR_SUCCESS
     )
 
 
-def savenormall_embed(channel):
+def savenormall_embed(channel, visible, perm_result):
     return discord.Embed(
         description=(
             f"{emoji_text(GREEN_TICK_EMOJI)}"
             f"Saved {channel.mention} for `/nonjaces`.\n"
-            "`/nonjaces` shows it. `/jaces` hides it. "
-            "View Channel only."
+            f"{view_update_text(visible, perm_result)}\n"
+            "`/nonjaces` shows it. `/jaces` hides it."
         ),
         colour=COLOR_SUCCESS
     )
+
+
+def format_saved_channel_lines(guild, channel_ids):
+    if not channel_ids:
+        return ["None"]
+
+    lines = []
+    for channel_id in channel_ids:
+        channel = guild.get_channel(channel_id)
+        if channel is None:
+            lines.append(f"- `{channel_id}` (deleted)")
+        else:
+            lines.append(f"- {channel.mention}")
+
+    if len(lines) > 40:
+        extra = len(lines) - 40
+        lines = lines[:40]
+        lines.append(f"- …and {extra} more")
+
+    return lines
+
+
+def assigned_channels_embed(guild):
+    state = jaces_guild_state(guild.id)
+    mode = "Jaces" if state.get("active") else "Normal"
+    jaces_lines = format_saved_channel_lines(
+        guild,
+        jaces_show_ids(state)
+    )
+    normal_lines = format_saved_channel_lines(
+        guild,
+        jaces_normal_ids(state)
+    )
+
+    embed = discord.Embed(
+        title="Saved channels",
+        colour=COLOR_NEUTRAL
+    )
+    embed.add_field(
+        name="!savejaces  ·  shown by /jaces",
+        value="\n".join(jaces_lines)[:1024],
+        inline=False
+    )
+    embed.add_field(
+        name="!savenormall  ·  shown by /nonjaces",
+        value="\n".join(normal_lines)[:1024],
+        inline=False
+    )
+    embed.set_footer(
+        text=f"Current mode: {mode}  ·  View Channel only"
+    )
+    return embed
 
 
 @bot.tree.command(
@@ -10061,7 +10160,7 @@ async def savejaces_slash(
         await reply_missing_jaces_admin(interaction)
         return
 
-    ok, error = await save_marked_channel(
+    ok, error, visible, perm_result = await save_marked_channel(
         interaction.guild,
         interaction.channel,
         "show_channel_ids",
@@ -10078,7 +10177,11 @@ async def savejaces_slash(
     )
 
     await interaction.response.send_message(
-        embed=savejaces_embed(interaction.channel),
+        embed=savejaces_embed(
+            interaction.channel,
+            visible,
+            perm_result
+        ),
         ephemeral=True
     )
 
@@ -10101,7 +10204,7 @@ async def savenormall_slash(
         await reply_missing_jaces_admin(interaction)
         return
 
-    ok, error = await save_marked_channel(
+    ok, error, visible, perm_result = await save_marked_channel(
         interaction.guild,
         interaction.channel,
         "normal_channel_ids",
@@ -10118,7 +10221,11 @@ async def savenormall_slash(
     )
 
     await interaction.response.send_message(
-        embed=savenormall_embed(interaction.channel),
+        embed=savenormall_embed(
+            interaction.channel,
+            visible,
+            perm_result
+        ),
         ephemeral=True
     )
 
@@ -10167,7 +10274,7 @@ async def savejaces(ctx):
     if not is_jaces_admin_user(ctx.author):
         return
 
-    ok, error = await save_marked_channel(
+    ok, error, visible, perm_result = await save_marked_channel(
         ctx.guild,
         ctx.channel,
         "show_channel_ids",
@@ -10184,7 +10291,11 @@ async def savejaces(ctx):
     )
 
     await ctx.reply(
-        embed=savejaces_embed(ctx.channel),
+        embed=savejaces_embed(
+            ctx.channel,
+            visible,
+            perm_result
+        ),
         mention_author=False
     )
 
@@ -10195,7 +10306,7 @@ async def savenormall(ctx):
     if not is_jaces_admin_user(ctx.author):
         return
 
-    ok, error = await save_marked_channel(
+    ok, error, visible, perm_result = await save_marked_channel(
         ctx.guild,
         ctx.channel,
         "normal_channel_ids",
@@ -10212,8 +10323,48 @@ async def savenormall(ctx):
     )
 
     await ctx.reply(
-        embed=savenormall_embed(ctx.channel),
+        embed=savenormall_embed(
+            ctx.channel,
+            visible,
+            perm_result
+        ),
         mention_author=False
+    )
+
+
+@bot.command(name="show")
+@commands.guild_only()
+async def show_saved_channels(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    await ctx.reply(
+        embed=assigned_channels_embed(ctx.guild),
+        mention_author=False
+    )
+
+
+@bot.tree.command(
+    name="show",
+    description="List channels saved for /jaces and /nonjaces"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def show_saved_channels_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    await interaction.response.send_message(
+        embed=assigned_channels_embed(interaction.guild),
+        ephemeral=True
     )
 
 
