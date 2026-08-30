@@ -6005,19 +6005,12 @@ class MiddlemanPanel(
             else "Biggest Trade"
         )
 
-        biggest_trade_container = (
-            discord.ui.Container(
-                discord.ui.TextDisplay(
-                    f"{biggest_trade_label}: "
-                    f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
-                    f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
-                ),
-                accent_colour=COLOR_NEUTRAL
-            )
-        )
-
         self.add_item(
-            biggest_trade_container
+            discord.ui.TextDisplay(
+                f"{biggest_trade_label}: "
+                f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
+                f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
+            )
         )
 
 
@@ -9395,6 +9388,19 @@ def validate_config():
 
     if errors:
         raise RuntimeError(
+            "Configure the following values before starting the bot: "
+            + ", ".join(
+                errors
+            )
+        )
+
+
+validate_config()
+
+bot.run(
+    TOKEN
+)
+timeError(
             "Configure the following values before starting the bot: "
             + ", ".join(
                 errors
