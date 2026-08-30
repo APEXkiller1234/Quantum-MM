@@ -6006,19 +6006,12 @@ class MiddlemanPanel(
             else "Biggest Trade"
         )
 
-        biggest_trade_container = (
-            discord.ui.Container(
-                discord.ui.TextDisplay(
-                    f"{biggest_trade_label}: "
-                    f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
-                    f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
-                ),
-                accent_colour=COLOR_NEUTRAL
-            )
-        )
-
         self.add_item(
-            biggest_trade_container
+            discord.ui.TextDisplay(
+                f"{biggest_trade_label}: "
+                f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
+                f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
+            )
         )
 
 
@@ -8593,8 +8586,27 @@ async def panel(
     )
 
     await interaction.response.send_message(
-        view=MiddlemanPanel()
+        "Panel posted.",
+        ephemeral=True
     )
+
+    if interaction.channel is None:
+        return
+
+    try:
+        await interaction.channel.send(
+            view=MiddlemanPanel()
+        )
+
+    except discord.HTTPException:
+        logger.exception(
+            "Failed to post middleman panel"
+        )
+
+        await interaction.followup.send(
+            "The panel could not be posted in this channel.",
+            ephemeral=True
+        )
 
 
 @bot.tree.command(
@@ -9377,19 +9389,6 @@ def validate_config():
 
     if errors:
         raise RuntimeError(
-            "Configure the following values before starting the bot: "
-            + ", ".join(
-                errors
-            )
-        )
-
-
-validate_config()
-
-bot.run(
-    TOKEN
-)
-eError(
             "Configure the following values before starting the bot: "
             + ", ".join(
                 errors
