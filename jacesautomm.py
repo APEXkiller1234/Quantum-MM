@@ -9093,8 +9093,6 @@ class JaceBot(
             CloseTicketView()
         )
 
-        await self.tree.sync()
-
     async def close(self):
         for task in list(
             MONITOR_TASKS.values()
@@ -9126,6 +9124,37 @@ class JaceBot(
 
 
 bot = JaceBot()
+
+SLASH_SYNCED_GUILDS = set()
+
+
+async def sync_slash_commands(guild=None):
+    targets = [guild] if guild is not None else list(bot.guilds)
+    synced_names = []
+
+    for target in targets:
+        if target is None:
+            continue
+
+        try:
+            bot.tree.copy_global_to(guild=target)
+            synced = await bot.tree.sync(guild=target)
+            names = [command.name for command in synced]
+            synced_names = names
+            SLASH_SYNCED_GUILDS.add(target.id)
+            log_action(
+                "slash_commands_synced",
+                guild=target.id,
+                count=len(synced),
+                names=", ".join(names) if names else "none"
+            )
+        except Exception:
+            logger.exception(
+                "Failed to sync slash commands for guild %s",
+                getattr(target, "id", target)
+            )
+
+    return synced_names
 
 
 async def resume_ticket_tasks():
@@ -9203,7 +9232,22 @@ async def on_ready():
 
             await resume_ticket_tasks()
 
+    missing = [
+        guild
+        for guild in bot.guilds
+        if guild.id not in SLASH_SYNCED_GUILDS
+    ]
+
+    if missing:
+        for guild in missing:
+            await sync_slash_commands(guild)
+
     ensure_demo_activity_task()
+
+
+@bot.event
+async def on_guild_join(guild):
+    await sync_slash_commands(guild)
 
 
 @bot.event
@@ -9894,9 +9938,58 @@ async def settle(
 
 
 
+async def reply_missing_jaces_admin(interaction):
+    await interaction.response.send_message(
+        "You do not have permission to use this command.",
+        ephemeral=True
+    )
+
+
+async def save_marked_channel(guild, channel, list_key, other_key):
+    ok, error = saveable_guild_channel(channel)
+    if not ok:
+        return None, error
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(guild.id)
+        mark_channel_list(
+            state,
+            list_key,
+            other_key,
+            channel.id
+        )
+        await save_data()
+
+    return True, None
+
+
+def savejaces_embed(channel):
+    return discord.Embed(
+        description=(
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Saved {channel.mention} for `/jaces`.\n"
+            "`/jaces` shows it. `/nonjaces` hides it. "
+            "View Channel only."
+        ),
+        colour=COLOR_SUCCESS
+    )
+
+
+def savenormall_embed(channel):
+    return discord.Embed(
+        description=(
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Saved {channel.mention} for `/nonjaces`.\n"
+            "`/nonjaces` shows it. `/jaces` hides it. "
+            "View Channel only."
+        ),
+        colour=COLOR_SUCCESS
+    )
+
+
 @bot.tree.command(
     name="jaces",
-    description="Show !savejaces channels, hide !savenormall channels, apply Jaces look"
+    description="Show saved Jaces channels and hide saved normal channels"
 )
 @app_commands.guild_only()
 @app_commands.default_permissions(
@@ -9911,10 +10004,7 @@ async def jaces_command(
     if (
         not is_jaces_admin_user(interaction.user)
     ):
-        await interaction.response.send_message(
-            "You do not have permission to use this command.",
-            ephemeral=True
-        )
+        await reply_missing_jaces_admin(interaction)
         return
 
     await interaction.response.defer(ephemeral=True, thinking=True)
@@ -9927,7 +10017,7 @@ async def jaces_command(
 
 @bot.tree.command(
     name="nonjaces",
-    description="Show !savenormall channels, hide !savejaces channels, apply normal look"
+    description="Show saved normal channels and hide saved Jaces channels"
 )
 @app_commands.guild_only()
 @app_commands.default_permissions(
@@ -9942,10 +10032,7 @@ async def nonjaces_command(
     if (
         not is_jaces_admin_user(interaction.user)
     ):
-        await interaction.response.send_message(
-            "You do not have permission to use this command.",
-            ephemeral=True
-        )
+        await reply_missing_jaces_admin(interaction)
         return
 
     await interaction.response.defer(ephemeral=True, thinking=True)
@@ -9956,26 +10043,139 @@ async def nonjaces_command(
     await interaction.followup.send(embed=embed, ephemeral=True)
 
 
+@bot.tree.command(
+    name="savejaces",
+    description="Mark this channel to show during /jaces"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def savejaces_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    ok, error = await save_marked_channel(
+        interaction.guild,
+        interaction.channel,
+        "show_channel_ids",
+        "normal_channel_ids"
+    )
+    if not ok:
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    log_action(
+        "jaces_channel_saved",
+        user=f"{interaction.user}({interaction.user.id})",
+        channel=f"{interaction.channel}({interaction.channel.id})"
+    )
+
+    await interaction.response.send_message(
+        embed=savejaces_embed(interaction.channel),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="savenormall",
+    description="Mark this channel to show during /nonjaces"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def savenormall_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    ok, error = await save_marked_channel(
+        interaction.guild,
+        interaction.channel,
+        "normal_channel_ids",
+        "show_channel_ids"
+    )
+    if not ok:
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    log_action(
+        "jaces_normal_channel_saved",
+        user=f"{interaction.user}({interaction.user.id})",
+        channel=f"{interaction.channel}({interaction.channel.id})"
+    )
+
+    await interaction.response.send_message(
+        embed=savenormall_embed(interaction.channel),
+        ephemeral=True
+    )
+
+
+@bot.command(name="jaces")
+@commands.guild_only()
+async def jaces_prefix(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    async with JACES_LOCK:
+        embed = await execute_jaces_mode(ctx.guild)
+
+    await ctx.reply(embed=embed, mention_author=False)
+
+
+@bot.command(name="nonjaces")
+@commands.guild_only()
+async def nonjaces_prefix(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    async with JACES_LOCK:
+        embed = await execute_nonjaces_mode(ctx.guild)
+
+    await ctx.reply(embed=embed, mention_author=False)
+
+
+@bot.command(name="sync")
+@commands.guild_only()
+async def sync_prefix(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    names = await sync_slash_commands(ctx.guild)
+    listed = ", ".join(f"`/{name}`" for name in names) or "none"
+    await ctx.reply(
+        f"Slash commands are now registered in this server: {listed}",
+        mention_author=False
+    )
+
+
 @bot.command(name="savejaces")
 @commands.guild_only()
 async def savejaces(ctx):
     if not is_jaces_admin_user(ctx.author):
         return
 
-    ok, error = saveable_guild_channel(ctx.channel)
+    ok, error = await save_marked_channel(
+        ctx.guild,
+        ctx.channel,
+        "show_channel_ids",
+        "normal_channel_ids"
+    )
     if not ok:
         await ctx.reply(error, mention_author=False)
         return
-
-    async with JACES_LOCK:
-        state = jaces_guild_state(ctx.guild.id)
-        mark_channel_list(
-            state,
-            "show_channel_ids",
-            "normal_channel_ids",
-            ctx.channel.id
-        )
-        await save_data()
 
     log_action(
         "jaces_channel_saved",
@@ -9984,15 +10184,7 @@ async def savejaces(ctx):
     )
 
     await ctx.reply(
-        embed=discord.Embed(
-            description=(
-                f"{emoji_text(GREEN_TICK_EMOJI)}"
-                f"Saved {ctx.channel.mention} for `/jaces`.\n"
-                "`/jaces` shows it. `/nonjaces` hides it. "
-                "View Channel only."
-            ),
-            colour=COLOR_SUCCESS
-        ),
+        embed=savejaces_embed(ctx.channel),
         mention_author=False
     )
 
@@ -10003,20 +10195,15 @@ async def savenormall(ctx):
     if not is_jaces_admin_user(ctx.author):
         return
 
-    ok, error = saveable_guild_channel(ctx.channel)
+    ok, error = await save_marked_channel(
+        ctx.guild,
+        ctx.channel,
+        "normal_channel_ids",
+        "show_channel_ids"
+    )
     if not ok:
         await ctx.reply(error, mention_author=False)
         return
-
-    async with JACES_LOCK:
-        state = jaces_guild_state(ctx.guild.id)
-        mark_channel_list(
-            state,
-            "normal_channel_ids",
-            "show_channel_ids",
-            ctx.channel.id
-        )
-        await save_data()
 
     log_action(
         "jaces_normal_channel_saved",
@@ -10025,15 +10212,7 @@ async def savenormall(ctx):
     )
 
     await ctx.reply(
-        embed=discord.Embed(
-            description=(
-                f"{emoji_text(GREEN_TICK_EMOJI)}"
-                f"Saved {ctx.channel.mention} for `/nonjaces`.\n"
-                "`/nonjaces` shows it. `/jaces` hides it. "
-                "View Channel only."
-            ),
-            colour=COLOR_SUCCESS
-        ),
+        embed=savenormall_embed(ctx.channel),
         mention_author=False
     )
 
