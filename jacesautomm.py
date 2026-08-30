@@ -19,7 +19,7 @@ from discord.ext import commands
 from colorama import Fore, Style, init as colorama_init
 
 
-TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.GUQRyT.f_cOR5HFlhQRhNb-y8_RGaUCKqQ63RK2Z1W6v8" # Get from Discord Developer Portal
+TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G6WRHu.Vp9ZvOW4ZNSe0RsFBqJ99f5Pw5_OnBZAqt3N3M" # Get from Discord Developer Portal
 YOUR_USER = 1506688372045910227 # Your User ID
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
 MM_TOS_CHANNEL = 1543637611070095421 # Auto Middleman ToS Channel ID
@@ -65,6 +65,35 @@ STARTING_TICKET_NUMBER = 12077
 BIGGEST_TRADE_USD = 29996 # Biggest completed trade amount shown on the panel footer
 BIGGEST_TRADE_MESSAGE_URL = "" # Message link to the biggest completed trade (e.g. https://discord.com/channels/guild/channel/message)
 
+# ===== Jaces mode =====
+# /jaces shows these channels to @everyone (View Channel only).
+# Add IDs here and/or run !savejaces in the channel.
+JACES_SHOW_CHANNEL_IDS = [
+]
+
+# /jaces hides these channels from @everyone (View Channel only).
+# Add IDs here and/or run !savehider in the channel.
+JACES_HIDER_CHANNEL_IDS = [
+]
+
+# Look applied by /jaces. Local file next to the bot, or an https URL. Leave "" to skip.
+JACES_SERVER_DESCRIPTION = ""
+JACES_SERVER_ICON = ""
+JACES_SERVER_BANNER = ""
+JACES_BOT_NAME = ""
+JACES_BOT_AVATAR = ""
+JACES_BOT_BANNER = ""
+JACES_BOT_ROLE_NAME = ""
+
+# Look restored by /nonjaces. Leave "" to restore the live look captured before /jaces.
+NORMAL_SERVER_DESCRIPTION = ""
+NORMAL_SERVER_ICON = ""
+NORMAL_SERVER_BANNER = ""
+NORMAL_BOT_NAME = ""
+NORMAL_BOT_AVATAR = ""
+NORMAL_BOT_BANNER = ""
+NORMAL_BOT_ROLE_NAME = ""
+
 
 # ===== Emojis ========
 
@@ -97,6 +126,12 @@ ZERO_WIDTH = chr(8203)
 DATA_FILE = Path("middleman_data.json")
 
 DATA_LOCK = asyncio.Lock()
+
+JACES_ASSETS_DIR = Path("jaces_assets")
+JACES_LOCK = asyncio.Lock()
+JACES_PERM_CONCURRENCY = 8
+JACES_REASON_ON = "Jaces mode"
+JACES_REASON_OFF = "Jaces mode revert"
 
 TICKET_LOCKS = {}
 MONITOR_TASKS = {}
@@ -248,7 +283,10 @@ def default_data():
         "tickets": {},
         "stats": {},
         "privacy": {},
-        "claimed_deposit_txids": {}
+        "claimed_deposit_txids": {},
+        "jaces": {
+            "guilds": {}
+        }
     }
 
 
@@ -292,6 +330,13 @@ def load_data():
         data.setdefault(
             "claimed_deposit_txids",
             {}
+        )
+
+        data.setdefault(
+            "jaces",
+            {
+                "guilds": {}
+            }
         )
 
         return data
@@ -5925,9 +5970,9 @@ class MiddlemanPanel(
                 "Jace's Auto Middleman"
             ),
             discord.ui.TextDisplay(
-                "• **Paid Service**\n"
-                "\n"
-                "• Read our ToS before using the bot: "
+                "> • **Paid Service**\n"
+                
+                "> • Read our ToS before using the bot: "
                 f"{get_channel_mention(TOS_CHANNEL)}"
             ),
             accessory=tutorial_button
@@ -5936,11 +5981,11 @@ class MiddlemanPanel(
         fees = discord.ui.TextDisplay(
             f"{H2} Fees:\n"
             "\n"
-            "• Deals $250+: $1.50\n"
-            "\n"
-            "• Deals under $250: $0.50\n"
-            "\n"
-            "• Deals under $50 are __FREE__"
+            "> • Deals $250+: $1.50\n"
+            
+            "> • Deals under $250: $0.50\n"
+            
+            "> • Deals under $50 are __FREE__"
         )
 
         main_container = (
@@ -5978,7 +6023,7 @@ class MiddlemanPanel(
                     "• Request USDT [BEP-20] • "
                     f"{USDT_EMOJI}\n"
                     "\n"
-                    "• Network: **BSC (BEP-20)**"
+                    "> • Network: **BSC (BEP-20)**"
                 ),
                 discord.ui.ActionRow(
                     RequestUSDTButton()
@@ -6000,9 +6045,9 @@ class MiddlemanPanel(
         )
 
         biggest_trade_label = (
-            f"[Biggest Trade]({BIGGEST_TRADE_MESSAGE_URL})"
+            f"[> Biggest Trade]({BIGGEST_TRADE_MESSAGE_URL})"
             if BIGGEST_TRADE_MESSAGE_URL
-            else "Biggest Trade"
+            else "> Biggest Trade"
         )
 
         self.add_item(
@@ -8363,8 +8408,876 @@ class CloseTicketView(
         )
 
 
+
+def default_jaces_guild_state():
+    return {
+        "active": False,
+        "show_channel_ids": [],
+        "hider_channel_ids": [],
+        "profiles": {},
+        "branding": {
+            "jaces": {},
+            "normal": {}
+        }
+    }
+
+
+def jaces_guild_state(guild_id):
+    root = DATA.setdefault(
+        "jaces",
+        {
+            "guilds": {}
+        }
+    )
+
+    guilds = root.setdefault(
+        "guilds",
+        {}
+    )
+
+    key = str(guild_id)
+    state = guilds.get(key)
+
+    if not isinstance(state, dict):
+        state = default_jaces_guild_state()
+        guilds[key] = state
+        return state
+
+    state.setdefault("active", False)
+    state.setdefault("show_channel_ids", [])
+    state.setdefault("hider_channel_ids", [])
+    state.setdefault("profiles", {})
+    branding = state.setdefault("branding", {})
+    branding.setdefault("jaces", {})
+    branding.setdefault("normal", {})
+    return state
+
+
+def unique_snowflakes(*groups):
+    seen = []
+    seen_set = set()
+
+    for group in groups:
+        if not group:
+            continue
+
+        for value in group:
+            try:
+                snowflake = int(value)
+            except (TypeError, ValueError):
+                continue
+
+            if snowflake <= 0 or snowflake in seen_set:
+                continue
+
+            seen.append(snowflake)
+            seen_set.add(snowflake)
+
+    return seen
+
+
+def store_id_list(values):
+    return [str(value) for value in unique_snowflakes(values)]
+
+
+def jaces_show_ids(state):
+    return unique_snowflakes(
+        JACES_SHOW_CHANNEL_IDS,
+        state.get("show_channel_ids", [])
+    )
+
+
+def jaces_hider_ids(state):
+    return unique_snowflakes(
+        JACES_HIDER_CHANNEL_IDS,
+        state.get("hider_channel_ids", [])
+    )
+
+
+def ticket_channel_id_set():
+    ids = set()
+
+    for ticket in DATA.get("tickets", {}).values():
+        if not isinstance(ticket, dict):
+            continue
+
+        try:
+            ids.add(int(ticket.get("channel_id")))
+        except (TypeError, ValueError):
+            continue
+
+    return ids
+
+
+def is_jaces_ticket_target(channel):
+    if channel is None:
+        return True
+
+    if isinstance(channel, discord.Thread):
+        return True
+
+    if get_ticket(channel.id):
+        return True
+
+    return False
+
+
+def is_jaces_admin_user(user):
+    if user is None:
+        return False
+
+    if int(user.id) == int(YOUR_USER):
+        return True
+
+    return (
+        isinstance(user, discord.Member)
+        and user.guild_permissions.administrator
+    )
+
+
+def channel_profile(state, channel_id):
+    profiles = state.setdefault("profiles", {})
+    key = str(channel_id)
+    profile = profiles.get(key)
+
+    if not isinstance(profile, dict):
+        profile = {}
+        profiles[key] = profile
+
+    profile.setdefault("jaces", [])
+    profile.setdefault("normal", [])
+    return profile
+
+
+def snapshot_view_overwrites(channel):
+    entries = []
+    seen = set()
+    everyone = channel.guild.default_role
+
+    for target, overwrite in channel.overwrites.items():
+        if target is None:
+            continue
+
+        target_type = (
+            "role"
+            if isinstance(target, discord.Role)
+            else "member"
+        )
+
+        entries.append({
+            "target_id": str(target.id),
+            "target_type": target_type,
+            "view_channel": overwrite.view_channel
+        })
+        seen.add(int(target.id))
+
+    if everyone.id not in seen:
+        overwrite = channel.overwrites_for(everyone)
+        entries.append({
+            "target_id": str(everyone.id),
+            "target_type": "role",
+            "view_channel": overwrite.view_channel
+        })
+
+    return entries
+
+
+def resolve_overwrite_target(guild, entry):
+    try:
+        target_id = int(entry.get("target_id"))
+    except (TypeError, ValueError):
+        return None
+
+    if entry.get("target_type") == "role":
+        role = guild.get_role(target_id)
+        if role is not None:
+            return role
+        return discord.Object(id=target_id)
+
+    member = guild.get_member(target_id)
+    if member is not None:
+        return member
+
+    return discord.Object(id=target_id)
+
+
+def image_suffix(data):
+    if data.startswith(b"\x89PNG"):
+        return ".png"
+    if data[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    return ".png"
+
+
+async def read_asset_bytes(source):
+    if not source:
+        return None
+
+    text = str(source).strip()
+    if not text:
+        return None
+
+    if text.startswith("http://") or text.startswith("https://"):
+        try:
+            async with bot.session.get(
+                text,
+                timeout=aiohttp.ClientTimeout(total=20)
+            ) as response:
+                if response.status != 200:
+                    return None
+                return await response.read()
+        except Exception:
+            logger.exception("Failed to download jaces asset %s", text)
+            return None
+
+    path = Path(text)
+    if not path.is_file():
+        path = JACES_ASSETS_DIR / text
+    if not path.is_file():
+        return None
+
+    try:
+        return path.read_bytes()
+    except OSError:
+        logger.exception("Failed to read jaces asset %s", path)
+        return None
+
+
+async def persist_asset_bytes(guild_id, label, data):
+    if not data:
+        return None
+
+    folder = JACES_ASSETS_DIR / str(guild_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{label}{image_suffix(data)}"
+    path.write_bytes(data)
+    return str(path)
+
+
+async def read_discord_asset(asset):
+    if asset is None:
+        return None
+
+    try:
+        return await asset.read()
+    except discord.HTTPException:
+        return None
+
+
+def get_bot_managed_role(guild):
+    me = guild.me
+    if me is None:
+        return None
+
+    for role in reversed(me.roles):
+        tags = getattr(role, "tags", None)
+        if tags is not None and tags.bot_id == me.id:
+            return role
+
+        if role.is_bot_managed():
+            return role
+
+    return None
+
+
+def config_branding(prefix):
+    return {
+        "server_description": globals()[f"{prefix}_SERVER_DESCRIPTION"],
+        "server_icon": globals()[f"{prefix}_SERVER_ICON"],
+        "server_banner": globals()[f"{prefix}_SERVER_BANNER"],
+        "bot_name": globals()[f"{prefix}_BOT_NAME"],
+        "bot_avatar": globals()[f"{prefix}_BOT_AVATAR"],
+        "bot_banner": globals()[f"{prefix}_BOT_BANNER"],
+        "bot_role_name": globals()[f"{prefix}_BOT_ROLE_NAME"]
+    }
+
+
+def branding_has_values(profile):
+    if not isinstance(profile, dict):
+        return False
+
+    return any(
+        str(profile.get(key) or "").strip()
+        for key in (
+            "server_description",
+            "server_icon",
+            "server_banner",
+            "bot_name",
+            "bot_avatar",
+            "bot_banner",
+            "bot_role_name"
+        )
+    )
+
+
+def merged_branding(saved, prefix):
+    fallback = config_branding(prefix)
+    merged = {}
+
+    for key, fallback_value in fallback.items():
+        saved_value = None
+        if isinstance(saved, dict):
+            saved_value = saved.get(key)
+
+        if saved_value is not None and str(saved_value).strip() != "":
+            merged[key] = saved_value
+        else:
+            merged[key] = fallback_value
+
+    return merged
+
+
+async def capture_live_branding(guild):
+    icon_bytes = await read_discord_asset(guild.icon)
+    banner_bytes = await read_discord_asset(guild.banner)
+    avatar_bytes = None
+    bot_banner_bytes = None
+
+    if bot.user is not None:
+        avatar_bytes = await read_discord_asset(bot.user.display_avatar)
+        bot_banner_bytes = await read_discord_asset(bot.user.banner)
+
+    role = get_bot_managed_role(guild)
+
+    return {
+        "server_description": guild.description or "",
+        "server_icon": await persist_asset_bytes(
+            guild.id,
+            "normal_server_icon",
+            icon_bytes
+        ) if icon_bytes else "",
+        "server_banner": await persist_asset_bytes(
+            guild.id,
+            "normal_server_banner",
+            banner_bytes
+        ) if banner_bytes else "",
+        "bot_name": bot.user.name if bot.user else "",
+        "bot_avatar": await persist_asset_bytes(
+            guild.id,
+            "normal_bot_avatar",
+            avatar_bytes
+        ) if avatar_bytes else "",
+        "bot_banner": await persist_asset_bytes(
+            guild.id,
+            "normal_bot_banner",
+            bot_banner_bytes
+        ) if bot_banner_bytes else "",
+        "bot_role_name": role.name if role is not None else ""
+    }
+
+
+async def capture_jaces_branding_from_live(guild):
+    icon_bytes = await read_discord_asset(guild.icon)
+    banner_bytes = await read_discord_asset(guild.banner)
+    avatar_bytes = None
+    bot_banner_bytes = None
+
+    if bot.user is not None:
+        avatar_bytes = await read_discord_asset(bot.user.display_avatar)
+        bot_banner_bytes = await read_discord_asset(bot.user.banner)
+
+    role = get_bot_managed_role(guild)
+
+    return {
+        "server_description": guild.description or "",
+        "server_icon": await persist_asset_bytes(
+            guild.id,
+            "jaces_server_icon",
+            icon_bytes
+        ) if icon_bytes else "",
+        "server_banner": await persist_asset_bytes(
+            guild.id,
+            "jaces_server_banner",
+            banner_bytes
+        ) if banner_bytes else "",
+        "bot_name": bot.user.name if bot.user else "",
+        "bot_avatar": await persist_asset_bytes(
+            guild.id,
+            "jaces_bot_avatar",
+            avatar_bytes
+        ) if avatar_bytes else "",
+        "bot_banner": await persist_asset_bytes(
+            guild.id,
+            "jaces_bot_banner",
+            bot_banner_bytes
+        ) if bot_banner_bytes else "",
+        "bot_role_name": role.name if role is not None else ""
+    }
+
+
+async def set_view_channel_only(channel, target, value, reason):
+    current = channel.overwrites_for(target)
+
+    if current.view_channel is value:
+        return "skipped"
+
+    current.view_channel = value
+
+    try:
+        if current.is_empty():
+            await channel.set_permissions(
+                target,
+                overwrite=None,
+                reason=reason
+            )
+        else:
+            await channel.set_permissions(
+                target,
+                overwrite=current,
+                reason=reason
+            )
+    except discord.HTTPException as error:
+        return f"error:{error}"
+
+    return "updated"
+
+
+async def apply_view_profile(channel, entries, reason):
+    if not entries:
+        return 0, 0, []
+
+    updated = 0
+    skipped = 0
+    errors = []
+
+    for entry in entries:
+        target = resolve_overwrite_target(channel.guild, entry)
+        if target is None:
+            continue
+
+        result = await set_view_channel_only(
+            channel,
+            target,
+            entry.get("view_channel"),
+            reason
+        )
+
+        if result == "updated":
+            updated += 1
+        elif result == "skipped":
+            skipped += 1
+        else:
+            errors.append(
+                f"{channel.mention}: {result.split(':', 1)[-1]}"
+            )
+
+    return updated, skipped, errors
+
+
+async def apply_everyone_view(channel, visible, reason):
+    return await set_view_channel_only(
+        channel,
+        channel.guild.default_role,
+        bool(visible),
+        reason
+    )
+
+
+async def resolve_guild_channel(guild, channel_id):
+    channel = guild.get_channel(channel_id)
+    if channel is not None:
+        return channel
+
+    try:
+        fetched = await bot.fetch_channel(channel_id)
+    except discord.HTTPException:
+        return None
+
+    if getattr(fetched, "guild", None) is None:
+        return None
+
+    if fetched.guild.id != guild.id:
+        return None
+
+    return fetched
+
+
+async def apply_branding_profile(guild, profile, reason):
+    notes = []
+
+    if not branding_has_values(profile):
+        return notes
+
+    guild_kwargs = {"reason": reason}
+    description = str(profile.get("server_description") or "").strip()
+    if description:
+        guild_kwargs["description"] = description
+
+    icon_bytes = await read_asset_bytes(profile.get("server_icon"))
+    if icon_bytes:
+        guild_kwargs["icon"] = icon_bytes
+
+    banner_bytes = await read_asset_bytes(profile.get("server_banner"))
+    if banner_bytes:
+        guild_kwargs["banner"] = banner_bytes
+
+    if len(guild_kwargs) > 1:
+        try:
+            await guild.edit(**guild_kwargs)
+            notes.append("server look updated")
+        except discord.HTTPException as error:
+            notes.append(f"server look failed: {error}")
+
+    user_kwargs = {}
+    bot_name = str(profile.get("bot_name") or "").strip()
+    if bot_name and bot.user is not None and bot.user.name != bot_name:
+        user_kwargs["username"] = bot_name
+
+    avatar_bytes = await read_asset_bytes(profile.get("bot_avatar"))
+    if avatar_bytes:
+        user_kwargs["avatar"] = avatar_bytes
+
+    banner_user_bytes = await read_asset_bytes(profile.get("bot_banner"))
+    if banner_user_bytes:
+        user_kwargs["banner"] = banner_user_bytes
+
+    if user_kwargs:
+        try:
+            await bot.user.edit(**user_kwargs)
+            notes.append("bot look updated")
+        except TypeError:
+            user_kwargs.pop("banner", None)
+            if user_kwargs:
+                try:
+                    await bot.user.edit(**user_kwargs)
+                    notes.append("bot look updated")
+                except discord.HTTPException as error:
+                    notes.append(f"bot look failed: {error}")
+            else:
+                notes.append("bot banner is not supported")
+        except discord.HTTPException as error:
+            notes.append(f"bot look failed: {error}")
+
+    role_name = str(profile.get("bot_role_name") or "").strip()
+    if role_name:
+        role = get_bot_managed_role(guild)
+        if role is None:
+            notes.append("bot role not found")
+        elif role.name != role_name:
+            try:
+                await role.edit(name=role_name, reason=reason)
+                notes.append("bot role renamed")
+            except discord.HTTPException as error:
+                notes.append(f"bot role failed: {error}")
+
+    return notes
+
+
+async def run_channel_jobs(jobs):
+    semaphore = asyncio.Semaphore(JACES_PERM_CONCURRENCY)
+
+    async def run_job(job):
+        async with semaphore:
+            return await job()
+
+    if not jobs:
+        return []
+
+    return await asyncio.gather(
+        *(run_job(job) for job in jobs),
+        return_exceptions=True
+    )
+
+
+def jaces_result_embed(title, colour, lines):
+    description = "\n".join(lines) if lines else "Done."
+    if len(description) > 3900:
+        description = description[:3900] + "\n…"
+
+    return discord.Embed(
+        title=title,
+        description=description,
+        colour=colour
+    )
+
+
+async def execute_jaces_mode(guild):
+    state = jaces_guild_state(guild.id)
+    ticket_ids = ticket_channel_id_set()
+    show_ids = [
+        channel_id
+        for channel_id in jaces_show_ids(state)
+        if channel_id not in ticket_ids
+    ]
+    hider_ids = [
+        channel_id
+        for channel_id in jaces_hider_ids(state)
+        if channel_id not in ticket_ids
+        and channel_id not in show_ids
+    ]
+
+    if not state.get("active"):
+        snapshot_ids = unique_snowflakes(show_ids, hider_ids)
+        for channel_id in snapshot_ids:
+            channel = await resolve_guild_channel(guild, channel_id)
+            if is_jaces_ticket_target(channel):
+                continue
+
+            profile = channel_profile(state, channel.id)
+            if not profile.get("normal"):
+                profile["normal"] = snapshot_view_overwrites(channel)
+
+        if not branding_has_values(state["branding"].get("normal")):
+            state["branding"]["normal"] = await capture_live_branding(guild)
+
+        await save_data()
+
+    results = {
+        "shown": 0,
+        "hidden": 0,
+        "skipped": 0,
+        "missing": 0,
+        "errors": []
+    }
+
+    async def handle_show(channel_id):
+        channel = await resolve_guild_channel(guild, channel_id)
+        if channel is None:
+            return ("missing", channel_id, None)
+        if is_jaces_ticket_target(channel):
+            return ("skipped", channel_id, None)
+
+        profile = channel_profile(state, channel.id)
+        _, _, errors = await apply_view_profile(
+            channel,
+            profile.get("jaces") or [],
+            JACES_REASON_ON
+        )
+        result = await apply_everyone_view(
+            channel,
+            True,
+            JACES_REASON_ON
+        )
+        return ("shown", channel_id, errors, result)
+
+    async def handle_hide(channel_id):
+        channel = await resolve_guild_channel(guild, channel_id)
+        if channel is None:
+            return ("missing", channel_id, None)
+        if is_jaces_ticket_target(channel):
+            return ("skipped", channel_id, None)
+
+        profile = channel_profile(state, channel.id)
+        _, _, errors = await apply_view_profile(
+            channel,
+            profile.get("jaces") or [],
+            JACES_REASON_ON
+        )
+        result = await apply_everyone_view(
+            channel,
+            False,
+            JACES_REASON_ON
+        )
+        return ("hidden", channel_id, errors, result)
+
+    jobs = []
+    jobs.extend(lambda channel_id=channel_id: handle_show(channel_id) for channel_id in show_ids)
+    jobs.extend(lambda channel_id=channel_id: handle_hide(channel_id) for channel_id in hider_ids)
+
+    branding_profile = merged_branding(
+        state["branding"].get("jaces"),
+        "JACES"
+    )
+
+    channel_task = asyncio.create_task(run_channel_jobs(jobs))
+    branding_task = asyncio.create_task(
+        apply_branding_profile(
+            guild,
+            branding_profile,
+            JACES_REASON_ON
+        )
+    )
+
+    channel_results, branding_notes = await asyncio.gather(
+        channel_task,
+        branding_task
+    )
+
+    for item in channel_results:
+        if isinstance(item, Exception):
+            results["errors"].append(str(item))
+            continue
+
+        kind = item[0]
+        if kind == "shown":
+            results["shown"] += 1
+            if item[2]:
+                results["errors"].extend(item[2])
+            if item[3] not in {"updated", "skipped"}:
+                results["errors"].append(str(item[3]))
+        elif kind == "hidden":
+            results["hidden"] += 1
+            if item[2]:
+                results["errors"].extend(item[2])
+            if item[3] not in {"updated", "skipped"}:
+                results["errors"].append(str(item[3]))
+        elif kind == "missing":
+            results["missing"] += 1
+        else:
+            results["skipped"] += 1
+
+    state["active"] = True
+    await save_data()
+
+    lines = [
+        f"{emoji_text(GREEN_TICK_EMOJI)}Shown to everyone: **{results['shown']}**",
+        f"{emoji_text(LOCK_EMOJI)}Hidden: **{results['hidden']}**"
+    ]
+
+    if results["skipped"]:
+        lines.append(f"Tickets skipped: **{results['skipped']}**")
+    if results["missing"]:
+        lines.append(f"Missing channels: **{results['missing']}**")
+    if branding_notes:
+        lines.append("Branding: " + "; ".join(branding_notes))
+    if results["errors"]:
+        lines.append("Issues:")
+        lines.extend(f"- {error}" for error in results["errors"][:8])
+
+    log_action(
+        "jaces_mode_enabled",
+        guild=guild.id,
+        shown=results["shown"],
+        hidden=results["hidden"]
+    )
+
+    return jaces_result_embed(
+        "Jaces mode on",
+        COLOR_SUCCESS,
+        lines
+    )
+
+
+async def execute_nonjaces_mode(guild):
+    state = jaces_guild_state(guild.id)
+    ticket_ids = ticket_channel_id_set()
+    restore_ids = unique_snowflakes(
+        jaces_show_ids(state),
+        jaces_hider_ids(state),
+        [int(key) for key in state.get("profiles", {}).keys() if str(key).isdigit()]
+    )
+
+    results = {
+        "restored": 0,
+        "skipped": 0,
+        "missing": 0,
+        "errors": []
+    }
+
+    async def handle_restore(channel_id):
+        if channel_id in ticket_ids:
+            return ("skipped", channel_id)
+
+        channel = await resolve_guild_channel(guild, channel_id)
+        if channel is None:
+            return ("missing", channel_id)
+        if is_jaces_ticket_target(channel):
+            return ("skipped", channel_id)
+
+        profile = channel_profile(state, channel.id)
+        entries = profile.get("normal") or []
+        if not entries:
+            return ("skipped", channel_id)
+
+        _, _, errors = await apply_view_profile(
+            channel,
+            entries,
+            JACES_REASON_OFF
+        )
+        return ("restored", channel_id, errors)
+
+    jobs = [
+        lambda channel_id=channel_id: handle_restore(channel_id)
+        for channel_id in restore_ids
+    ]
+
+    branding_profile = merged_branding(
+        state["branding"].get("normal"),
+        "NORMAL"
+    )
+
+    channel_task = asyncio.create_task(run_channel_jobs(jobs))
+    branding_task = asyncio.create_task(
+        apply_branding_profile(
+            guild,
+            branding_profile,
+            JACES_REASON_OFF
+        )
+    )
+
+    channel_results, branding_notes = await asyncio.gather(
+        channel_task,
+        branding_task
+    )
+
+    for item in channel_results:
+        if isinstance(item, Exception):
+            results["errors"].append(str(item))
+            continue
+
+        kind = item[0]
+        if kind == "restored":
+            results["restored"] += 1
+            if item[2]:
+                results["errors"].extend(item[2])
+        elif kind == "missing":
+            results["missing"] += 1
+        else:
+            results["skipped"] += 1
+
+    state["active"] = False
+    await save_data()
+
+    lines = [
+        f"{emoji_text(GREEN_TICK_EMOJI)}Restored channels: **{results['restored']}**"
+    ]
+
+    if results["skipped"]:
+        lines.append(f"Skipped: **{results['skipped']}**")
+    if results["missing"]:
+        lines.append(f"Missing channels: **{results['missing']}**")
+    if branding_notes:
+        lines.append("Branding: " + "; ".join(branding_notes))
+    if results["errors"]:
+        lines.append("Issues:")
+        lines.extend(f"- {error}" for error in results["errors"][:8])
+
+    log_action(
+        "jaces_mode_disabled",
+        guild=guild.id,
+        restored=results["restored"]
+    )
+
+    return jaces_result_embed(
+        "Jaces mode off",
+        COLOR_NEUTRAL,
+        lines
+    )
+
+
+def saveable_guild_channel(channel):
+    if channel is None:
+        return False, "Use this in a server channel."
+
+    if isinstance(channel, discord.Thread):
+        return False, "This does not apply to tickets or threads."
+
+    if is_jaces_ticket_target(channel):
+        return False, "This does not apply to tickets."
+
+    if not isinstance(channel, discord.abc.GuildChannel):
+        return False, "This channel cannot be saved."
+
+    return True, None
+
+
 intents = discord.Intents.default()
 intents.members = True
+intents.message_content = True
 
 
 class JaceBot(
@@ -8373,7 +9286,8 @@ class JaceBot(
     def __init__(self):
         super().__init__(
             command_prefix="!",
-            intents=intents
+            intents=intents,
+            case_insensitive=True
         )
 
         self.session = None
@@ -8557,6 +9471,39 @@ async def on_error(
         "event=%s\n%s",
         event_method,
         traceback.format_exc()
+    )
+
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    if isinstance(error, commands.MissingPermissions):
+        try:
+            await ctx.reply(
+                "You do not have permission to use this command.",
+                mention_author=False
+            )
+        except discord.HTTPException:
+            pass
+        return
+
+    if isinstance(error, commands.NoPrivateMessage):
+        return
+
+    logger.error(
+        "Unhandled prefix command error | user=%s(%s) | command=%s\n%s",
+        ctx.author,
+        ctx.author.id,
+        getattr(ctx.command, "qualified_name", "unknown"),
+        "".join(
+            traceback.format_exception(
+                type(error),
+                error,
+                error.__traceback__
+            )
+        )
     )
 
 
@@ -9200,6 +10147,249 @@ async def settle(
     )
 
 
+
+@bot.tree.command(
+    name="jaces",
+    description="Show marked channels to everyone and apply the Jaces look"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def jaces_command(
+    interaction: discord.Interaction
+):
+    if (
+        not is_jaces_admin_user(interaction.user)
+    ):
+        await interaction.response.send_message(
+            "You do not have permission to use this command.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    async with JACES_LOCK:
+        embed = await execute_jaces_mode(interaction.guild)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="nonjaces",
+    description="Revert everything /jaces changed"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def nonjaces_command(
+    interaction: discord.Interaction
+):
+    if (
+        not is_jaces_admin_user(interaction.user)
+    ):
+        await interaction.response.send_message(
+            "You do not have permission to use this command.",
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    async with JACES_LOCK:
+        embed = await execute_nonjaces_mode(interaction.guild)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.command(name="savejaces")
+@commands.guild_only()
+async def savejaces(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    ok, error = saveable_guild_channel(ctx.channel)
+    if not ok:
+        await ctx.reply(error, mention_author=False)
+        return
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(ctx.guild.id)
+        show_ids = unique_snowflakes(state.get("show_channel_ids", []), [ctx.channel.id])
+        hider_ids = [
+            channel_id
+            for channel_id in unique_snowflakes(state.get("hider_channel_ids", []))
+            if channel_id != ctx.channel.id
+        ]
+        state["show_channel_ids"] = store_id_list(show_ids)
+        state["hider_channel_ids"] = store_id_list(hider_ids)
+
+        profile = channel_profile(state, ctx.channel.id)
+        profile["jaces"] = snapshot_view_overwrites(ctx.channel)
+        if not profile.get("normal"):
+            profile["normal"] = snapshot_view_overwrites(ctx.channel)
+
+        await save_data()
+
+    log_action(
+        "jaces_channel_saved",
+        user=f"{ctx.author}({ctx.author.id})",
+        channel=f"{ctx.channel}({ctx.channel.id})"
+    )
+
+    await ctx.reply(
+        embed=discord.Embed(
+            description=(
+                f"{emoji_text(GREEN_TICK_EMOJI)}"
+                f"Saved {ctx.channel.mention} for `/jaces`.\n"
+                "When `/jaces` is used, this channel is shown to @everyone "
+                "(View Channel only)."
+            ),
+            colour=COLOR_SUCCESS
+        ),
+        mention_author=False
+    )
+
+
+@bot.command(name="savenormall", aliases=["savenormal"])
+@commands.guild_only()
+async def savenormall(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    ok, error = saveable_guild_channel(ctx.channel)
+    if not ok:
+        await ctx.reply(error, mention_author=False)
+        return
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(ctx.guild.id)
+        profile = channel_profile(state, ctx.channel.id)
+        profile["normal"] = snapshot_view_overwrites(ctx.channel)
+        await save_data()
+
+    log_action(
+        "jaces_normal_channel_saved",
+        user=f"{ctx.author}({ctx.author.id})",
+        channel=f"{ctx.channel}({ctx.channel.id})"
+    )
+
+    await ctx.reply(
+        embed=discord.Embed(
+            description=(
+                f"{emoji_text(GREEN_TICK_EMOJI)}"
+                f"Saved {ctx.channel.mention} for `/nonjaces`.\n"
+                "When `/nonjaces` is used, this channel's View Channel "
+                "overwrites are restored."
+            ),
+            colour=COLOR_SUCCESS
+        ),
+        mention_author=False
+    )
+
+
+@bot.command(name="savehider")
+@commands.guild_only()
+async def savehider(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    ok, error = saveable_guild_channel(ctx.channel)
+    if not ok:
+        await ctx.reply(error, mention_author=False)
+        return
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(ctx.guild.id)
+        hider_ids = unique_snowflakes(state.get("hider_channel_ids", []), [ctx.channel.id])
+        show_ids = [
+            channel_id
+            for channel_id in unique_snowflakes(state.get("show_channel_ids", []))
+            if channel_id != ctx.channel.id
+        ]
+        state["hider_channel_ids"] = store_id_list(hider_ids)
+        state["show_channel_ids"] = store_id_list(show_ids)
+
+        profile = channel_profile(state, ctx.channel.id)
+        if not profile.get("normal"):
+            profile["normal"] = snapshot_view_overwrites(ctx.channel)
+
+        await save_data()
+
+    log_action(
+        "jaces_hider_saved",
+        user=f"{ctx.author}({ctx.author.id})",
+        channel=f"{ctx.channel}({ctx.channel.id})"
+    )
+
+    await ctx.reply(
+        embed=discord.Embed(
+            description=(
+                f"{emoji_text(LOCK_EMOJI)}"
+                f"Saved {ctx.channel.mention} as a hider.\n"
+                "When `/jaces` is used, this channel is hidden from @everyone "
+                "(View Channel only)."
+            ),
+            colour=COLOR_WARNING
+        ),
+        mention_author=False
+    )
+
+
+@bot.command(name="savejacesbranding")
+@commands.guild_only()
+async def savejacesbranding(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(ctx.guild.id)
+        state["branding"]["jaces"] = await capture_jaces_branding_from_live(ctx.guild)
+        await save_data()
+
+    await ctx.reply(
+        embed=discord.Embed(
+            description=(
+                f"{emoji_text(GREEN_TICK_EMOJI)}"
+                "Saved the current server/bot look for `/jaces`."
+            ),
+            colour=COLOR_SUCCESS
+        ),
+        mention_author=False
+    )
+
+
+@bot.command(name="savenormalbranding")
+@commands.guild_only()
+async def savenormalbranding(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    async with JACES_LOCK:
+        state = jaces_guild_state(ctx.guild.id)
+        state["branding"]["normal"] = await capture_live_branding(ctx.guild)
+        await save_data()
+
+    await ctx.reply(
+        embed=discord.Embed(
+            description=(
+                f"{emoji_text(GREEN_TICK_EMOJI)}"
+                "Saved the current server/bot look for `/nonjaces`."
+            ),
+            colour=COLOR_SUCCESS
+        ),
+        mention_author=False
+    )
+
+
 @bot.tree.error
 async def app_command_error(
     interaction,
@@ -9388,19 +10578,6 @@ def validate_config():
 
     if errors:
         raise RuntimeError(
-            "Configure the following values before starting the bot: "
-            + ", ".join(
-                errors
-            )
-        )
-
-
-validate_config()
-
-bot.run(
-    TOKEN
-)
-timeError(
             "Configure the following values before starting the bot: "
             + ", ".join(
                 errors
