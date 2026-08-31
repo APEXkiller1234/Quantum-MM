@@ -1915,13 +1915,17 @@ async def prepare_ticket_thread(
         return channel
 
     try:
-        if (
-            channel.archived
-            or not channel.locked
-        ):
+        edits = {}
+
+        if channel.archived:
+            edits["archived"] = False
+
+        if channel.locked:
+            edits["locked"] = False
+
+        if edits:
             await channel.edit(
-                archived=False,
-                locked=True
+                **edits
             )
 
     except discord.HTTPException:
@@ -2028,12 +2032,12 @@ async def ensure_parent_access(
                 view_channel=True,
                 read_message_history=True,
                 send_messages=False,
-                send_messages_in_threads=False,
+                send_messages_in_threads=True,
                 create_public_threads=False,
                 create_private_threads=False,
-                add_reactions=False,
-                attach_files=False,
-                embed_links=False
+                add_reactions=True,
+                attach_files=True,
+                embed_links=True
             )
 
         except discord.HTTPException:
@@ -2077,6 +2081,26 @@ async def create_ticket_thread(
     )
 
 
+async def delete_thread_join_messages(
+    thread
+):
+    try:
+        async for message in thread.history(
+            limit=20
+        ):
+            if message.type is discord.MessageType.recipient_add:
+                try:
+                    await message.delete()
+                except discord.HTTPException:
+                    pass
+
+    except discord.HTTPException:
+        logger.exception(
+            "Failed to delete thread join messages for %s",
+            thread.id
+        )
+
+
 async def add_ticket_thread_members(
     thread,
     opener,
@@ -2101,6 +2125,11 @@ async def add_ticket_thread_members(
                 member.id,
                 thread.id
             )
+
+    await asyncio.sleep(0.5)
+    await delete_thread_join_messages(
+        thread
+    )
 
 
 def role_selection_embed(ticket):
@@ -5351,14 +5380,6 @@ class RequestModal(
                     f"Middleman ticket {number}"
                 )
             )
-
-            try:
-                await channel.edit(
-                    locked=True
-                )
-
-            except discord.HTTPException:
-                pass
 
             await add_ticket_thread_members(
                 channel,
@@ -9469,6 +9490,26 @@ async def on_command_error(ctx, error):
             )
         )
     )
+
+
+@bot.listen("on_message")
+async def delete_ticket_join_system_messages(message):
+    if message.type is not discord.MessageType.recipient_add:
+        return
+
+    if not isinstance(message.channel, discord.Thread):
+        return
+
+    if message.guild is None or bot.user is None:
+        return
+
+    if message.author.id != bot.user.id:
+        return
+
+    try:
+        await message.delete()
+    except discord.HTTPException:
+        pass
 
 
 @bot.tree.command(
