@@ -273,6 +273,14 @@ def log_security(action, **details):
         )
 
 
+def default_presence():
+    return {
+        "type": "playing",
+        "text": "",
+        "status": "online"
+    }
+
+
 def default_data():
     return {
         "next_ticket_number": STARTING_TICKET_NUMBER,
@@ -282,7 +290,8 @@ def default_data():
         "claimed_deposit_txids": {},
         "jaces": {
             "guilds": {}
-        }
+        },
+        "presence": default_presence()
     }
 
 
@@ -333,6 +342,11 @@ def load_data():
             {
                 "guilds": {}
             }
+        )
+
+        data.setdefault(
+            "presence",
+            default_presence()
         )
 
         return data
@@ -8587,6 +8601,84 @@ def is_jaces_admin_user(user):
     )
 
 
+PRESENCE_ACTIVITY_TYPES = {
+    "playing": discord.ActivityType.playing,
+    "watching": discord.ActivityType.watching,
+    "listening": discord.ActivityType.listening,
+    "competing": discord.ActivityType.competing,
+    "custom": discord.ActivityType.custom
+}
+
+PRESENCE_STATUSES = {
+    "online": discord.Status.online,
+    "idle": discord.Status.idle,
+    "dnd": discord.Status.dnd,
+    "invisible": discord.Status.invisible
+}
+
+
+def presence_state():
+    state = DATA.get("presence")
+    if not isinstance(state, dict):
+        state = default_presence()
+        DATA["presence"] = state
+        return state
+
+    state.setdefault("type", "playing")
+    state.setdefault("text", "")
+    state.setdefault("status", "online")
+    return state
+
+
+def build_bot_activity(state):
+    text = str(state.get("text") or "").strip()
+    if not text:
+        return None
+
+    kind = str(state.get("type") or "playing").lower()
+    if kind == "custom":
+        return discord.CustomActivity(name=text[:128])
+
+    activity_type = PRESENCE_ACTIVITY_TYPES.get(
+        kind,
+        discord.ActivityType.playing
+    )
+    return discord.Activity(
+        type=activity_type,
+        name=text[:128]
+    )
+
+
+def bot_status_from_state(state):
+    return PRESENCE_STATUSES.get(
+        str(state.get("status") or "online").lower(),
+        discord.Status.online
+    )
+
+
+def presence_label(state):
+    text = str(state.get("text") or "").strip()
+    if not text:
+        return "cleared"
+
+    kind = str(state.get("type") or "playing").title()
+    if kind.lower() == "listening":
+        return f"Listening to {text}"
+    if kind.lower() == "competing":
+        return f"Competing in {text}"
+    if kind.lower() == "custom":
+        return text
+    return f"{kind} {text}"
+
+
+async def apply_bot_presence():
+    state = presence_state()
+    await bot.change_presence(
+        activity=build_bot_activity(state),
+        status=bot_status_from_state(state)
+    )
+
+
 def mark_channel_list(state, list_key, other_key, channel_id):
     current = unique_snowflakes(state.get(list_key, []), [channel_id])
     other = [
@@ -9410,6 +9502,17 @@ async def on_ready():
             await sync_slash_commands(guild)
 
     ensure_demo_activity_task()
+
+    try:
+        await apply_bot_presence()
+        log_action(
+            "bot_presence_applied",
+            activity=presence_label(presence_state())
+        )
+    except discord.HTTPException:
+        logger.exception(
+            "Failed to apply saved bot activity"
+        )
 
 
 @bot.event
@@ -10586,6 +10689,137 @@ async def autommtos_slash(
         user=f"{interaction.user}({interaction.user.id})",
         channel=f"{interaction.channel}({interaction.channel.id})"
     )
+
+
+set_group = app_commands.Group(
+    name="set",
+    description="Configure the bot",
+    default_permissions=discord.Permissions(
+        administrator=True
+    )
+)
+
+
+@set_group.command(
+    name="activity",
+    description="Set the bot's Discord activity"
+)
+@app_commands.guild_only()
+@app_commands.describe(
+    text="Activity text shown on the bot. Use a dash (-) to clear it.",
+    type="Activity type",
+    status="Online status"
+)
+@app_commands.choices(
+    type=[
+        app_commands.Choice(
+            name="Playing",
+            value="playing"
+        ),
+        app_commands.Choice(
+            name="Watching",
+            value="watching"
+        ),
+        app_commands.Choice(
+            name="Listening",
+            value="listening"
+        ),
+        app_commands.Choice(
+            name="Competing",
+            value="competing"
+        ),
+        app_commands.Choice(
+            name="Custom",
+            value="custom"
+        )
+    ],
+    status=[
+        app_commands.Choice(
+            name="Online",
+            value="online"
+        ),
+        app_commands.Choice(
+            name="Idle",
+            value="idle"
+        ),
+        app_commands.Choice(
+            name="Do Not Disturb",
+            value="dnd"
+        ),
+        app_commands.Choice(
+            name="Invisible",
+            value="invisible"
+        )
+    ]
+)
+async def set_activity_slash(
+    interaction: discord.Interaction,
+    text: str,
+    type: app_commands.Choice[str] = None,
+    status: app_commands.Choice[str] = None
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    cleaned = str(text or "").strip()[:128]
+    if cleaned.lower() in {"-", "clear", "none", "off"}:
+        cleaned = ""
+
+    activity_type = (
+        type.value
+        if type is not None
+        else "playing"
+    )
+    status_value = (
+        status.value
+        if status is not None
+        else "online"
+    )
+
+    state = presence_state()
+    state["type"] = activity_type
+    state["text"] = cleaned
+    state["status"] = status_value
+    await save_data()
+
+    try:
+        await apply_bot_presence()
+    except discord.HTTPException:
+        logger.exception("Failed to set bot activity")
+        await interaction.response.send_message(
+            "Discord rejected the activity update.",
+            ephemeral=True
+        )
+        return
+
+    label = presence_label(state)
+    log_action(
+        "bot_activity_set",
+        user=f"{interaction.user}({interaction.user.id})",
+        activity=label,
+        status=status_value
+    )
+
+    if cleaned:
+        message = (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Activity set to **{label}**."
+        )
+    else:
+        message = (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            "Bot activity cleared."
+        )
+
+    await interaction.response.send_message(
+        message,
+        ephemeral=True
+    )
+
+
+bot.tree.add_command(set_group)
+
 
 @bot.tree.error
 async def app_command_error(
