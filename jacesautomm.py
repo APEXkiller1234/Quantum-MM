@@ -1878,62 +1878,6 @@ def cached_ticket_channel(
     )
 
 
-def is_private_thread_parent(
-    channel
-):
-    return (
-        isinstance(
-            channel,
-            discord.TextChannel
-        )
-        and not isinstance(
-            channel,
-            discord.Thread
-        )
-    )
-
-
-def thread_parent_from(
-    channel
-):
-    if isinstance(
-        channel,
-        discord.Thread
-    ):
-        return channel.parent
-
-    return channel
-
-
-async def prepare_ticket_thread(
-    channel
-):
-    if not isinstance(
-        channel,
-        discord.Thread
-    ):
-        return channel
-
-    try:
-        edits = {}
-
-        if channel.archived:
-            edits["archived"] = False
-
-        if channel.locked:
-            edits["locked"] = False
-
-        if edits:
-            await channel.edit(
-                **edits
-            )
-
-    except discord.HTTPException:
-        pass
-
-    return channel
-
-
 async def resolve_ticket_channel(
     ticket
 ):
@@ -1965,171 +1909,200 @@ async def resolve_ticket_channel(
         except discord.HTTPException:
             return None
 
-    return await prepare_ticket_thread(
-        channel
+    return channel
+
+
+async def get_ticket_category(
+    guild
+):
+    if guild is None:
+        return None
+
+    configured = guild.get_channel(
+        TICKET_CATEGORY
     )
 
+    if configured is None:
+        try:
+            configured = await bot.fetch_channel(
+                TICKET_CATEGORY
+            )
 
-async def get_ticket_thread_parent(
-    interaction
-):
-    guild = interaction.guild
-    configured = None
+        except discord.HTTPException:
+            return None
 
-    if guild is not None:
-        configured = guild.get_channel(
-            TICKET_CATEGORY
-        )
-
-        if configured is None:
-            try:
-                configured = await bot.fetch_channel(
-                    TICKET_CATEGORY
-                )
-
-            except discord.HTTPException:
-                configured = None
-
-    if is_private_thread_parent(
-        configured
+    if isinstance(
+        configured,
+        discord.CategoryChannel
     ):
         return configured
 
-    parent = thread_parent_from(
-        interaction.channel
+    category = getattr(
+        configured,
+        "category",
+        None
     )
 
-    if is_private_thread_parent(
-        parent
+    if isinstance(
+        category,
+        discord.CategoryChannel
     ):
-        return parent
+        return category
 
     return None
 
 
-async def ensure_parent_access(
-    parent,
-    opener,
-    trader
+def ticket_member_overwrite(
+    can_chat
 ):
-    for member in (
-        opener,
-        trader
-    ):
-        if member is None:
-            continue
+    return discord.PermissionOverwrite(
+        view_channel=True,
+        read_message_history=True,
+        send_messages=can_chat,
+        add_reactions=can_chat,
+        attach_files=can_chat,
+        embed_links=can_chat,
+        send_messages_in_threads=can_chat,
+        create_public_threads=False,
+        create_private_threads=False
+    )
 
-        permissions = parent.permissions_for(
-            member
+
+def ticket_channel_overwrites(
+    guild,
+    opener,
+    trader,
+    can_chat=False
+):
+    overwrites = {
+        guild.default_role: discord.PermissionOverwrite(
+            view_channel=False,
+            send_messages=False
+        )
+    }
+
+    me = guild.me
+    if me is not None:
+        overwrites[me] = discord.PermissionOverwrite(
+            view_channel=True,
+            send_messages=True,
+            read_message_history=True,
+            manage_channels=True,
+            manage_messages=True,
+            embed_links=True,
+            attach_files=True,
+            add_reactions=True
         )
 
-        if permissions.view_channel:
-            continue
+    if opener is not None:
+        overwrites[opener] = ticket_member_overwrite(
+            can_chat
+        )
 
-        try:
-            await parent.set_permissions(
-                member,
-                view_channel=True,
-                read_message_history=True,
-                send_messages=False,
-                send_messages_in_threads=True,
-                create_public_threads=False,
-                create_private_threads=False,
-                add_reactions=True,
-                attach_files=True,
-                embed_links=True
-            )
+    if (
+        trader is not None
+        and (
+            opener is None
+            or trader.id != opener.id
+        )
+    ):
+        overwrites[trader] = ticket_member_overwrite(
+            can_chat
+        )
 
-        except discord.HTTPException:
-            logger.exception(
-                "Failed to grant ticket parent access to %s(%s)",
-                member,
-                member.id
-            )
+    return overwrites
 
 
-async def create_ticket_thread(
-    parent,
+async def create_ticket_channel(
+    guild,
     name,
+    opener,
+    trader,
     reason
 ):
-    last_error = None
-
-    for duration in (
-        10080,
-        4320,
-        1440,
-        60
-    ):
-        try:
-            return await parent.create_thread(
-                name=name,
-                type=discord.ChannelType.private_thread,
-                invitable=False,
-                auto_archive_duration=duration,
-                reason=reason
-            )
-
-        except discord.HTTPException as error:
-            last_error = error
-
-    if last_error is not None:
-        raise last_error
-
-    raise RuntimeError(
-        "Failed to create private ticket thread"
+    category = await get_ticket_category(
+        guild
     )
 
-
-async def delete_thread_join_messages(
-    thread
-):
-    try:
-        async for message in thread.history(
-            limit=20
-        ):
-            if message.type is discord.MessageType.recipient_add:
-                try:
-                    await message.delete()
-                except discord.HTTPException:
-                    pass
-
-    except discord.HTTPException:
-        logger.exception(
-            "Failed to delete thread join messages for %s",
-            thread.id
+    if category is None:
+        raise RuntimeError(
+            "ticket category missing"
         )
 
+    return await guild.create_text_channel(
+        name=name,
+        category=category,
+        overwrites=ticket_channel_overwrites(
+            guild,
+            opener,
+            trader,
+            can_chat=False
+        ),
+        reason=reason
+    )
 
-async def add_ticket_thread_members(
-    thread,
-    opener,
-    trader
+
+async def set_ticket_chat_enabled(
+    channel,
+    ticket,
+    enabled
 ):
-    for member in (
-        opener,
-        trader
+    if channel is None or ticket is None:
+        return
+
+    guild = channel.guild
+    if guild is None:
+        return
+
+    for user_id in (
+        ticket.get("opener_id"),
+        ticket.get("trader_id")
     ):
-        if member is None:
+        if not user_id:
             continue
 
-        try:
-            await thread.add_user(
-                member
-            )
+        member = guild.get_member(
+            int(user_id)
+        )
 
+        if member is None:
+            try:
+                member = await guild.fetch_member(
+                    int(user_id)
+                )
+            except discord.HTTPException:
+                continue
+
+        overwrite = channel.overwrites_for(
+            member
+        )
+        overwrite.view_channel = True
+        overwrite.read_message_history = True
+        overwrite.send_messages = bool(enabled)
+        overwrite.add_reactions = bool(enabled)
+        overwrite.attach_files = bool(enabled)
+        overwrite.embed_links = bool(enabled)
+
+        try:
+            await channel.set_permissions(
+                member,
+                overwrite=overwrite,
+                reason=(
+                    "Ticket chat unlocked"
+                    if enabled
+                    else "Ticket chat locked"
+                )
+            )
         except discord.HTTPException:
             logger.exception(
-                "Failed to add %s(%s) to ticket thread %s",
+                "Failed to update ticket chat for %s(%s) in %s",
                 member,
                 member.id,
-                thread.id
+                channel.id
             )
 
-    await asyncio.sleep(0.5)
-    await delete_thread_join_messages(
-        thread
-    )
+    ticket["chat_unlocked"] = bool(enabled)
+    await save_data()
 
 
 def role_selection_embed(ticket):
@@ -3163,6 +3136,12 @@ async def send_payment_info(
     ] = message.id
 
     await save_data()
+
+    await set_ticket_chat_enabled(
+        channel,
+        ticket,
+        True
+    )
 
     ensure_monitor(
         ticket
@@ -5073,10 +5052,6 @@ async def close_ticket_channel(
         reason=reason
     )
 
-    channel = await prepare_ticket_thread(
-        channel
-    )
-
     guild = channel.guild
 
     transcript_channel = (
@@ -5344,13 +5319,14 @@ class RequestModal(
 
             return
 
-        parent = await get_ticket_thread_parent(
-            interaction
+        category = await get_ticket_category(
+            interaction.guild
         )
 
-        if parent is None:
+        if category is None:
             await interaction.followup.send(
-                "Private ticket threads can only be created from a text channel.",
+                "The ticket category could not be found. "
+                "Set TICKET_CATEGORY to a category ID.",
                 ephemeral=True
             )
 
@@ -5366,35 +5342,34 @@ class RequestModal(
             f"{number}"
         )
 
-        await ensure_parent_access(
-            parent,
-            opener,
-            trader
-        )
-
         try:
-            channel = await create_ticket_thread(
-                parent,
+            channel = await create_ticket_channel(
+                interaction.guild,
                 channel_name,
+                opener,
+                trader,
                 (
                     f"Middleman ticket {number}"
                 )
             )
 
-            await add_ticket_thread_members(
-                channel,
-                opener,
-                trader
+        except RuntimeError:
+            await interaction.followup.send(
+                "The ticket category could not be found. "
+                "Set TICKET_CATEGORY to a category ID.",
+                ephemeral=True
             )
+
+            return
 
         except discord.HTTPException:
             logger.exception(
-                "Failed to create ticket thread"
+                "Failed to create ticket channel"
             )
 
             await interaction.followup.send(
                 "Discord rejected the ticket creation request. "
-                "Check the bot's Create Private Threads and Manage Threads permissions.",
+                "Check the bot's Manage Channels permission and ticket category.",
                 ephemeral=True
             )
 
@@ -8593,9 +8568,6 @@ def is_jaces_ticket_target(channel):
     if channel is None:
         return True
 
-    if isinstance(channel, discord.Thread):
-        return True
-
     if get_ticket(channel.id):
         return True
 
@@ -9490,26 +9462,6 @@ async def on_command_error(ctx, error):
             )
         )
     )
-
-
-@bot.listen("on_message")
-async def delete_ticket_join_system_messages(message):
-    if message.type is not discord.MessageType.recipient_add:
-        return
-
-    if not isinstance(message.channel, discord.Thread):
-        return
-
-    if message.guild is None or bot.user is None:
-        return
-
-    if message.author.id != bot.user.id:
-        return
-
-    try:
-        await message.delete()
-    except discord.HTTPException:
-        pass
 
 
 @bot.tree.command(
