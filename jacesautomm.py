@@ -8984,14 +8984,13 @@ async def apply_bot_bio(text):
         return None
 
     try:
-        app = bot.application
-        if app is None:
-            app = await bot.application_info()
+        app = await bot.application_info()
     except discord.HTTPException as error:
         return f"bot bio failed: {error}"
 
-    if str(app.description or "") == bio:
-        return "bot bio skipped"
+    current = str(getattr(app, "description", None) or "").strip()
+    if current == bio:
+        return None
 
     try:
         await app.edit(description=bio[:400])
