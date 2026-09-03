@@ -21,6 +21,7 @@ from colorama import Fore, Style, init as colorama_init
 
 TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G0dKNK.UOec5xB2OTtHMKJk4RWQDxNVAEwj6vU2Blon6M" # Get from Discord Developer Portal
 YOUR_USER = 1506688372045910227 # Your User ID
+STAFF_COMMAND_ROLE = 0 # Role ID that can use staff commands with admins
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
 MM_TOS_CHANNEL = 1543637636487450724 # Auto Middleman ToS Channel ID
 AUTOMM_TRADE_CHANNEL = 1543637629243891764 # Channel linked in !autommtos ("start a trade here") 
@@ -8900,6 +8901,27 @@ def is_jaces_admin_user(user):
     )
 
 
+def staff_command_role_id():
+    try:
+        return int(STAFF_COMMAND_ROLE or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def is_staff_command_user(user):
+    if is_jaces_admin_user(user):
+        return True
+
+    if not isinstance(user, discord.Member):
+        return False
+
+    role_id = staff_command_role_id()
+    if role_id <= 0:
+        return False
+
+    return any(role.id == role_id for role in user.roles)
+
+
 PRESENCE_ACTIVITY_TYPES = {
     "playing": discord.ActivityType.playing,
     "watching": discord.ActivityType.watching,
@@ -10096,10 +10118,7 @@ async def mark_deposit(
         100000
     ]
 ):
-    if (
-        interaction.user.id
-        != YOUR_USER
-    ):
+    if not is_staff_command_user(interaction.user):
         log_security(
             "unauthorized_mark_deposit_attempt",
             user=(
@@ -10373,12 +10392,6 @@ async def mark_deposit(
     )
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(
-    administrator=True
-)
-@app_commands.checks.has_permissions(
-    administrator=True
-)
 @app_commands.describe(
     ticket_number="The ticket number",
     payout_txid="The blockchain payout transaction ID",
@@ -10390,6 +10403,10 @@ async def settle(
     payout_txid: str,
     payout_amount: str
 ):
+    if not is_staff_command_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
     ticket = get_ticket_by_number(
         ticket_number
     )
@@ -10691,18 +10708,10 @@ def assigned_channels_embed(guild):
     description="Show saved Jaces channels and hide saved normal channels"
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(
-    administrator=True
-)
-@app_commands.checks.has_permissions(
-    administrator=True
-)
 async def jaces_command(
     interaction: discord.Interaction
 ):
-    if (
-        not is_jaces_admin_user(interaction.user)
-    ):
+    if not is_staff_command_user(interaction.user):
         await reply_missing_jaces_admin(interaction)
         return
 
@@ -10719,18 +10728,10 @@ async def jaces_command(
     description="Show saved normal channels and hide saved Jaces channels"
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(
-    administrator=True
-)
-@app_commands.checks.has_permissions(
-    administrator=True
-)
 async def nonjaces_command(
     interaction: discord.Interaction
 ):
-    if (
-        not is_jaces_admin_user(interaction.user)
-    ):
+    if not is_staff_command_user(interaction.user):
         await reply_missing_jaces_admin(interaction)
         return
 
@@ -10833,7 +10834,7 @@ async def savenormall_slash(
 @bot.command(name="jaces")
 @commands.guild_only()
 async def jaces_prefix(ctx):
-    if not is_jaces_admin_user(ctx.author):
+    if not is_staff_command_user(ctx.author):
         return
 
     async with JACES_LOCK:
@@ -10845,7 +10846,7 @@ async def jaces_prefix(ctx):
 @bot.command(name="nonjaces")
 @commands.guild_only()
 async def nonjaces_prefix(ctx):
-    if not is_jaces_admin_user(ctx.author):
+    if not is_staff_command_user(ctx.author):
         return
 
     async with JACES_LOCK:
@@ -11113,8 +11114,6 @@ async def set_role_slash(
     description="Set a user's biggest deal amount"
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(
     user="The user to update",
     amount="Biggest deal USD amount"
@@ -11124,7 +11123,7 @@ async def set_biggest_deal_slash(
     user: discord.Member,
     amount: str
 ):
-    if not is_jaces_admin_user(interaction.user):
+    if not is_staff_command_user(interaction.user):
         await reply_missing_jaces_admin(interaction)
         return
 
@@ -11162,8 +11161,6 @@ async def set_biggest_deal_slash(
     description="Set a user's total USD value"
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(
     user="The user to update",
     amount="Total USD value"
@@ -11173,7 +11170,7 @@ async def set_totalvalue_slash(
     user: discord.Member,
     amount: str
 ):
-    if not is_jaces_admin_user(interaction.user):
+    if not is_staff_command_user(interaction.user):
         await reply_missing_jaces_admin(interaction)
         return
 
@@ -11219,8 +11216,6 @@ async def set_totalvalue_slash(
     description="Set a user's completed deal count"
 )
 @app_commands.guild_only()
-@app_commands.default_permissions(administrator=True)
-@app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(
     user="The user to update",
     amount="Number of completed deals"
@@ -11230,7 +11225,7 @@ async def set_totaldeals_slash(
     user: discord.Member,
     amount: str
 ):
-    if not is_jaces_admin_user(interaction.user):
+    if not is_staff_command_user(interaction.user):
         await reply_missing_jaces_admin(interaction)
         return
 
