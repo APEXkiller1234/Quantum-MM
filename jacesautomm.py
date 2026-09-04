@@ -19,9 +19,9 @@ from discord.ext import commands
 from colorama import Fore, Style, init as colorama_init
 
 
-TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.G0dKNK.UOec5xB2OTtHMKJk4RWQDxNVAEwj6vU2Blon6M" # Get from Discord Developer Portal
+TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.GkdFj_.C0PSPiLD7T6SRukoACVdkE6gR12MCkaBNQiWN4" # Get from Discord Developer Portal
 YOUR_USER = 1506688372045910227 # Your User ID
-STAFF_COMMAND_ROLE = 0 # Role ID that can use staff commands with admins
+STAFF_COMMAND_ROLE = 1544772439014121572
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
 MM_TOS_CHANNEL = 1543637636487450724 # Auto Middleman ToS Channel ID
 AUTOMM_TRADE_CHANNEL = 1543637629243891764 # Channel linked in !autommtos ("start a trade here") 
@@ -35,8 +35,13 @@ TUTORIAL_URL = "https://www.youtube.com/watch?v=XIkpcT2WNPI" # For Tutorial Butt
 LTC_DEPOSIT_ADDRESS = "LduBxCtH1jTrhmccGvZExDQHmhWB9r2d9D" # Your Litecoin Address
 USDT_DEPOSIT_ADDRESS = "0x4675Bf0637fFd33A32419C0fDcD7b677A6ca146e" # Your USDT Address
 
+# Demo completed-trade posts. Use one BlockCypher / Etherscan account here.
 BLOCKCYPHER_TOKEN = "692da515d0ed4d4e9fd6352efcbe727b" # Get from https://www.blockcypher.com/apis.html
 ETHERSCAN_API_KEY = "5M7Q4T5GX35IUUJ49HSC71JUUAD2F726E1" # Get from https://etherscan.io/api
+
+# Live tickets. Use a second BlockCypher / Etherscan account here.
+TICKET_BLOCKCYPHER_TOKEN = "" # Second BlockCypher token for tickets
+TICKET_ETHERSCAN_API_KEY = "" # Second Etherscan key for tickets
 
 COINBASE_LTC_PRICE_URL = "https://api.coinbase.com/v2/prices/LTC-USD/spot"
 
@@ -71,7 +76,7 @@ BIGGEST_TRADE_MESSAGE_URL = "" # Message link to the biggest completed trade (e.
 # Put image files next to this script or inside jaces_assets/. Leave "" to skip that field.
 # Example: JACES_SERVER_ICON = "jaces_server_icon.png"
 
-JACES_SERVER_NAME = "Jace's MM"
+JACES_SERVER_NAME = "Jace's MM Service"
 JACES_SERVER_DESCRIPTION = "https://jaces.xyz/"
 JACES_SERVER_ICON = "https://github.com/APEXkiller1234/Vaultix/blob/main/1788102354-icon%20(1).gif?raw=true"
 JACES_SERVER_BANNER = "https://github.com/APEXkiller1234/Vaultix/blob/main/jacebanner.webp?raw=true"
@@ -92,15 +97,16 @@ NORMAL_BOT_ROLE_NAME = "Horizon the best"
 # Applied by /jaces and /nonjaces. Leave "" to skip that field.
 # Status: online, idle, dnd, invisible
 # Activity type: playing, watching, listening, competing, custom
-JACES_BOT_STATUS = "online"
-JACES_BOT_ACTIVITY_TYPE = "playing"
+JACES_BOT_STATUS = "• 430,139 deals • https://jaces.xyz"
+JACES_BOT_ACTIVITY_TYPE = ""
 JACES_BOT_ACTIVITY = ""
-JACES_BOT_BIO = ""
+JACES_BOT_BIO = """https://jaces.xyz/
+https://kookie-py.github.io/bot-privacy-policy"""
 
-NORMAL_BOT_STATUS = "online"
-NORMAL_BOT_ACTIVITY_TYPE = "playing"
+NORMAL_BOT_STATUS = "Watching Everything"
+NORMAL_BOT_ACTIVITY_TYPE = "Cooking Roblox"
 NORMAL_BOT_ACTIVITY = ""
-NORMAL_BOT_BIO = ""
+NORMAL_BOT_BIO = "HORIZONNNNNNNNNNNNNNN"
 
 
 # ===== Emojis ========
@@ -1113,6 +1119,32 @@ async def claim_deposit_txid(
     return True
 
 
+def cleaned_secret(value):
+    return str(value or "").strip()
+
+
+def demo_blockcypher_token():
+    return cleaned_secret(BLOCKCYPHER_TOKEN)
+
+
+def ticket_blockcypher_token():
+    return (
+        cleaned_secret(TICKET_BLOCKCYPHER_TOKEN)
+        or demo_blockcypher_token()
+    )
+
+
+def demo_etherscan_key():
+    return cleaned_secret(ETHERSCAN_API_KEY)
+
+
+def ticket_etherscan_key():
+    return (
+        cleaned_secret(TICKET_ETHERSCAN_API_KEY)
+        or demo_etherscan_key()
+    )
+
+
 async def http_get_json(
     url,
     params=None,
@@ -1174,10 +1206,11 @@ async def fetch_ltc_chain_overview():
 
     params = {}
 
-    if BLOCKCYPHER_TOKEN:
+    token = demo_blockcypher_token()
+    if token:
         params[
             "token"
-        ] = BLOCKCYPHER_TOKEN
+        ] = token
 
     data = await http_get_json(
         url,
@@ -1230,10 +1263,11 @@ async def fetch_ltc_block(
         )
     }
 
-    if BLOCKCYPHER_TOKEN:
+    token = demo_blockcypher_token()
+    if token:
         params[
             "token"
-        ] = BLOCKCYPHER_TOKEN
+        ] = token
 
     data = await http_get_json(
         url,
@@ -1317,7 +1351,8 @@ async def fetch_random_confirmed_ltc_sample():
 
         for txid in txids[:20]:
             tx = await fetch_ltc_transaction(
-                txid
+                txid,
+                token=demo_blockcypher_token()
             )
 
             if not isinstance(
@@ -1706,7 +1741,7 @@ async def get_ltc_price():
         return None
 
 
-async def fetch_ltc_transactions(address):
+async def fetch_ltc_transactions(address, token=None):
     url = (
         "https://api.blockcypher.com/"
         f"v1/ltc/main/addrs/{address}/full"
@@ -1716,10 +1751,13 @@ async def fetch_ltc_transactions(address):
         "limit": 50
     }
 
-    if BLOCKCYPHER_TOKEN:
+    if token is None:
+        token = ticket_blockcypher_token()
+
+    if token:
         params[
             "token"
-        ] = BLOCKCYPHER_TOKEN
+        ] = token
 
     data = await http_get_json(
         url,
@@ -1744,7 +1782,7 @@ async def fetch_ltc_transactions(address):
     )
 
 
-async def fetch_ltc_transaction(txid):
+async def fetch_ltc_transaction(txid, token=None):
     url = (
         "https://api.blockcypher.com/"
         f"v1/ltc/main/txs/{txid}"
@@ -1752,10 +1790,13 @@ async def fetch_ltc_transaction(txid):
 
     params = {}
 
-    if BLOCKCYPHER_TOKEN:
+    if token is None:
+        token = ticket_blockcypher_token()
+
+    if token:
         params[
             "token"
-        ] = BLOCKCYPHER_TOKEN
+        ] = token
 
     return await http_get_json(
         url,
@@ -1791,8 +1832,11 @@ def ltc_received_by_tx(
     return total
 
 
-async def fetch_usdt_transfers(address):
-    if not ETHERSCAN_API_KEY:
+async def fetch_usdt_transfers(address, api_key=None):
+    if api_key is None:
+        api_key = ticket_etherscan_key()
+
+    if not api_key:
         return None
 
     url = (
@@ -1809,7 +1853,7 @@ async def fetch_usdt_transfers(address):
         "page": 1,
         "offset": 1000,
         "sort": "desc",
-        "apikey": ETHERSCAN_API_KEY
+        "apikey": api_key
     }
 
     data = await http_get_json(
@@ -6399,7 +6443,7 @@ class TicketOpenerLayout(
                 "> Please explicitly state the trade details "
                 "if the information below is inaccurate.\n"
                 "> By using this bot, you agree to our ToS "
-                f"{get_channel_mention(TOS_CHANNEL)}."
+                f"{get_channel_mention(MM_TOS_CHANNEL)}."
             )
         )
 
@@ -7099,7 +7143,12 @@ class RoleConfirmationView(
         await interaction.followup.send(
             embed=role_correct_embed(
                 interaction.user
-            )
+            ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
         )
 
         if both:
@@ -7186,7 +7235,12 @@ class RoleConfirmationView(
         await interaction.followup.send(
             embed=role_incorrect_embed(
                 interaction.user
-            )
+            ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
         )
 
         await send_role_selection(
@@ -7390,7 +7444,12 @@ class UsdConfirmationView(
         await interaction.followup.send(
             embed=usd_correct_embed(
                 interaction.user
-            )
+            ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
         )
 
         if both:
@@ -7485,7 +7544,12 @@ class UsdConfirmationView(
         await interaction.followup.send(
             embed=usd_incorrect_embed(
                 interaction.user
-            )
+            ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=False,
+            everyone=False
+        )
         )
 
         await send_usd_prompt(
@@ -11557,10 +11621,10 @@ def validate_config():
 
     if (
         AUTO_MONITOR_USDT
-        and not ETHERSCAN_API_KEY.strip()
+        and not ticket_etherscan_key()
     ):
         errors.append(
-            "ETHERSCAN_API_KEY"
+            "TICKET_ETHERSCAN_API_KEY or ETHERSCAN_API_KEY"
         )
 
     if SETTLEMENT_MODE.lower() not in {
