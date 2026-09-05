@@ -158,6 +158,7 @@ READY_RESUME_LOCK = asyncio.Lock()
 READY_RESUMED = False
 BANNER_PRINTED = False
 DEMO_ACTIVITY_TASK = None
+BASELINE_IN_PROGRESS = 0
 
 
 colorama_init(autoreset=True)
@@ -1145,18 +1146,55 @@ def ticket_etherscan_key():
     )
 
 
+def chain_keys_shared():
+    return not cleaned_secret(TICKET_BLOCKCYPHER_TOKEN)
+
+
+def tickets_need_ltc_chain():
+    if BASELINE_IN_PROGRESS > 0:
+        return True
+
+    for ticket in DATA.get("tickets", {}).values():
+        if not isinstance(ticket, dict):
+            continue
+
+        if ticket.get("type") != "ltc":
+            continue
+
+        if ticket.get("status") in {
+            "waiting_deposit",
+            "deposit_unconfirmed"
+        }:
+            return True
+
+    return False
+
+
+def http_retry_after(response):
+    headers = getattr(response, "headers", None) or {}
+    raw = None
+    if hasattr(headers, "get"):
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+
+    try:
+        return max(15.0, float(raw))
+    except (TypeError, ValueError):
+        return 15.0
+
+
 async def http_get_json(
     url,
     params=None,
     headers=None,
     attempts=3,
-    timeout=15
+    timeout=15,
+    wait_on_rate_limit=False
 ):
     last_error = None
+    attempt = 0
 
-    for attempt in range(
-        attempts
-    ):
+    while attempt < attempts:
+        response = None
         try:
             async with bot.session.get(
                 url,
@@ -1168,7 +1206,13 @@ async def http_get_json(
             ) as response:
 
                 if response.status == 200:
-                    return await response.json()
+                    data = await response.json()
+                    if isinstance(data, dict) and data.get("error"):
+                        last_error = RuntimeError(
+                            str(data.get("error"))[:300]
+                        )
+                    else:
+                        return data
 
                 body = await response.text()
 
@@ -1177,15 +1221,27 @@ async def http_get_json(
                     f"{body[:300]}"
                 )
 
+                if (
+                    wait_on_rate_limit
+                    and response.status == 429
+                ):
+                    wait = http_retry_after(response)
+                    log_action(
+                        "chain_rate_limited",
+                        url=url,
+                        retry_in=int(wait)
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+
         except Exception as error:
             last_error = error
 
-        if attempt + 1 < attempts:
+        attempt += 1
+
+        if attempt < attempts:
             await asyncio.sleep(
-                1.5
-                * (
-                    attempt + 1
-                )
+                1.5 * attempt
             )
 
     if last_error:
@@ -1488,6 +1544,12 @@ async def send_demo_completed_activity():
     if not DEMO_ACTIVITY_ENABLED:
         return False
 
+    if chain_keys_shared() and tickets_need_ltc_chain():
+        log_action(
+            "demo_activity_skipped_for_tickets"
+        )
+        return False
+
     channel = bot.get_channel(
         DEMO_COMPLETED_TRANSACTION_CHANNEL
     )
@@ -1761,7 +1823,9 @@ async def fetch_ltc_transactions(address, token=None):
 
     data = await http_get_json(
         url,
-        params=params
+        params=params,
+        timeout=30,
+        wait_on_rate_limit=True
     )
 
     if data is None:
@@ -1800,7 +1864,8 @@ async def fetch_ltc_transaction(txid, token=None):
 
     return await http_get_json(
         url,
-        params=params
+        params=params,
+        wait_on_rate_limit=True
     )
 
 
@@ -1858,7 +1923,8 @@ async def fetch_usdt_transfers(address, api_key=None):
 
     data = await http_get_json(
         url,
-        params=params
+        params=params,
+        wait_on_rate_limit=True
     )
 
     if data is None:
@@ -1988,7 +2054,52 @@ def parse_usdt_transfer(transfer):
         )
 
 
-async def create_baseline(ticket):
+async def fetch_ltc_address_txids(address, token=None):
+    url = (
+        "https://api.blockcypher.com/"
+        f"v1/ltc/main/addrs/{address}"
+    )
+
+    params = {
+        "limit": 50
+    }
+
+    if token is None:
+        token = ticket_blockcypher_token()
+
+    if token:
+        params[
+            "token"
+        ] = token
+
+    data = await http_get_json(
+        url,
+        params=params,
+        timeout=20,
+        wait_on_rate_limit=True
+    )
+
+    if not isinstance(data, dict):
+        return None
+
+    hashes = []
+    for key in ("txrefs", "unconfirmed_txrefs"):
+        items = data.get(key) or []
+        if not isinstance(items, list):
+            continue
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+
+            txid = item.get("tx_hash") or item.get("hash")
+            if txid:
+                hashes.append(txid)
+
+    return hashes
+
+
+async def create_baseline_once(ticket):
     if ticket[
         "type"
     ] == "ltc":
@@ -2000,27 +2111,34 @@ async def create_baseline(ticket):
 
             return True
 
-        txs = await fetch_ltc_transactions(
+        txids = await fetch_ltc_address_txids(
             ticket[
                 "deposit_address"
             ]
         )
 
-        if txs is None:
-            return False
+        if txids is None:
+            txs = await fetch_ltc_transactions(
+                ticket[
+                    "deposit_address"
+                ]
+            )
+
+            if txs is None:
+                return False
+
+            txids = [
+                tx.get("hash")
+                for tx in txs
+                if tx.get("hash")
+            ]
 
         ticket[
             "baseline_txids"
         ] = [
-            normalize_txid(
-                tx.get(
-                    "hash"
-                )
-            )
-            for tx in txs
-            if tx.get(
-                "hash"
-            )
+            normalize_txid(txid)
+            for txid in txids
+            if txid
         ]
 
         return True
@@ -2057,6 +2175,26 @@ async def create_baseline(ticket):
     ]
 
     return True
+
+
+async def create_baseline(ticket):
+    global BASELINE_IN_PROGRESS
+
+    BASELINE_IN_PROGRESS += 1
+    try:
+        while True:
+            if await create_baseline_once(ticket):
+                return True
+
+            log_action(
+                "baseline_retry",
+                ticket=ticket.get("number"),
+                asset=get_asset_name(ticket),
+                retry_in=15
+            )
+            await asyncio.sleep(15)
+    finally:
+        BASELINE_IN_PROGRESS = max(0, BASELINE_IN_PROGRESS - 1)
 
 
 async def resolve_trader(
@@ -3364,39 +3502,35 @@ async def send_payment_info(
         "manual_reference"
     ] = None
 
-    baseline_ok = await create_baseline(
-        ticket
-    )
-
-    if not baseline_ok:
-        ticket[
-            "status"
-        ] = "usd_confirmation"
-
-        ticket[
-            "usd_confirmed"
-        ] = []
-
-        await save_data()
-
-        await channel.send(
-            embed=discord.Embed(
-                description=(
-                    f"{emoji_text(ANIMATED_X_EMOJI)}"
-                    f"{DOT} "
-                    "**Unable to initialize blockchain monitoring. "
-                    "Please confirm the USD amount again.**"
-                ),
-                colour=COLOR_ERROR
-            )
-        )
-
-        await send_usd_confirmation(
-            channel,
+    baseline_task = asyncio.create_task(
+        create_baseline(
             ticket
         )
+    )
 
-        return False
+    waiting_message = None
+    done, _pending = await asyncio.wait(
+        {baseline_task},
+        timeout=2
+    )
+
+    if not baseline_task.done():
+        waiting_message = await channel.send(
+            embed=discord.Embed(
+                description=(
+                    f"{emoji_text(BLUE_LOADING_EMOJI)}"
+                    "• **Preparing payment details...**"
+                ),
+                colour=COLOR_NEUTRAL
+            )
+        )
+        await baseline_task
+
+    if waiting_message is not None:
+        try:
+            await waiting_message.delete()
+        except discord.HTTPException:
+            pass
 
     ticket[
         "status"
