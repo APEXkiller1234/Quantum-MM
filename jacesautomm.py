@@ -159,6 +159,8 @@ READY_RESUMED = False
 BANNER_PRINTED = False
 DEMO_ACTIVITY_TASK = None
 BASELINE_IN_PROGRESS = 0
+TICKET_CHAIN_CACHE = {}
+TICKET_CHAIN_CACHE_LOCK = asyncio.Lock()
 
 
 colorama_init(autoreset=True)
@@ -1179,7 +1181,38 @@ def http_retry_after(response):
     try:
         return max(15.0, float(raw))
     except (TypeError, ValueError):
-        return 15.0
+        return 60.0
+
+
+def is_rate_limit_error(status, error_text):
+    if status == 429:
+        return True
+
+    text = str(error_text or "").lower()
+    return (
+        "rate limit" in text
+        or "limit exceeded" in text
+        or "too many requests" in text
+    )
+
+
+async def cached_ticket_chain_get(key, fetcher, ttl=12):
+    async with TICKET_CHAIN_CACHE_LOCK:
+        now = time.monotonic()
+        entry = TICKET_CHAIN_CACHE.get(key)
+        if (
+            entry is not None
+            and now - entry[0] < entry[2]
+        ):
+            return entry[1]
+
+        data = await fetcher()
+        TICKET_CHAIN_CACHE[key] = (
+            now,
+            data,
+            float(ttl) if data is not None else 5.0
+        )
+        return data
 
 
 async def http_get_json(
@@ -1194,7 +1227,6 @@ async def http_get_json(
     attempt = 0
 
     while attempt < attempts:
-        response = None
         try:
             async with bot.session.get(
                 url,
@@ -1204,35 +1236,46 @@ async def http_get_json(
                     total=timeout
                 )
             ) as response:
-
-                if response.status == 200:
+                status = response.status
+                if status == 200:
                     data = await response.json()
-                    if isinstance(data, dict) and data.get("error"):
-                        last_error = RuntimeError(
-                            str(data.get("error"))[:300]
-                        )
+                    error_text = ""
+                    if isinstance(data, dict):
+                        error_text = str(data.get("error") or "")
+
+                    if error_text:
+                        last_error = RuntimeError(error_text[:300])
+                        if (
+                            wait_on_rate_limit
+                            and is_rate_limit_error(status, error_text)
+                        ):
+                            wait = http_retry_after(response)
+                            log_action(
+                                "chain_rate_limited",
+                                url=url,
+                                retry_in=int(wait)
+                            )
+                            await asyncio.sleep(wait)
+                            continue
                     else:
                         return data
-
-                body = await response.text()
-
-                last_error = RuntimeError(
-                    f"HTTP {response.status}: "
-                    f"{body[:300]}"
-                )
-
-                if (
-                    wait_on_rate_limit
-                    and response.status == 429
-                ):
-                    wait = http_retry_after(response)
-                    log_action(
-                        "chain_rate_limited",
-                        url=url,
-                        retry_in=int(wait)
+                else:
+                    body = await response.text()
+                    last_error = RuntimeError(
+                        f"HTTP {status}: {body[:300]}"
                     )
-                    await asyncio.sleep(wait)
-                    continue
+                    if (
+                        wait_on_rate_limit
+                        and is_rate_limit_error(status, body)
+                    ):
+                        wait = http_retry_after(response)
+                        log_action(
+                            "chain_rate_limited",
+                            url=url,
+                            retry_in=int(wait)
+                        )
+                        await asyncio.sleep(wait)
+                        continue
 
         except Exception as error:
             last_error = error
@@ -1847,25 +1890,27 @@ async def fetch_ltc_transactions(address, token=None):
 
 
 async def fetch_ltc_transaction(txid, token=None):
-    url = (
-        "https://api.blockcypher.com/"
-        f"v1/ltc/main/txs/{txid}"
-    )
-
-    params = {}
-
     if token is None:
         token = ticket_blockcypher_token()
 
-    if token:
-        params[
-            "token"
-        ] = token
+    async def load():
+        url = (
+            "https://api.blockcypher.com/"
+            f"v1/ltc/main/txs/{txid}"
+        )
+        params = {}
+        if token:
+            params["token"] = token
+        return await http_get_json(
+            url,
+            params=params,
+            wait_on_rate_limit=True
+        )
 
-    return await http_get_json(
-        url,
-        params=params,
-        wait_on_rate_limit=True
+    return await cached_ticket_chain_get(
+        f"tx:{txid}:{token}",
+        load,
+        ttl=12
     )
 
 
@@ -2072,11 +2117,18 @@ async def fetch_ltc_address_txids(address, token=None):
             "token"
         ] = token
 
-    data = await http_get_json(
-        url,
-        params=params,
-        timeout=20,
-        wait_on_rate_limit=True
+    async def load():
+        return await http_get_json(
+            url,
+            params=params,
+            timeout=20,
+            wait_on_rate_limit=True
+        )
+
+    data = await cached_ticket_chain_get(
+        f"addr:{address}:{token}",
+        load,
+        ttl=12
     )
 
     if not isinstance(data, dict):
@@ -2095,6 +2147,16 @@ async def fetch_ltc_address_txids(address, token=None):
             txid = item.get("tx_hash") or item.get("hash")
             if txid:
                 hashes.append(txid)
+
+    try:
+        known = int(data.get("n_tx") or 0) + int(
+            data.get("unconfirmed_n_tx") or 0
+        )
+    except (TypeError, ValueError):
+        known = 0
+
+    if not hashes and known > 0:
+        return None
 
     return hashes
 
@@ -3977,13 +4039,6 @@ async def monitor_ltc_ticket(ticket):
         "deposit_address"
     ]
 
-    txs = await fetch_ltc_transactions(
-        address
-    )
-
-    if txs is None:
-        return
-
     expected_satoshi = int(
         (
             required_crypto_decimal(
@@ -4007,55 +4062,50 @@ async def monitor_ltc_ticket(ticket):
         current_txid = None
 
     if current_txid:
-        for tx in txs:
-            txid = tx.get(
-                "hash"
-            )
+        tx = await fetch_ltc_transaction(
+            current_txid
+        )
 
-            if (
-                not txid
-                or normalize_txid(
-                    txid
-                )
-                != normalize_txid(
-                    current_txid
-                )
-            ):
-                continue
-
-            received = ltc_received_by_tx(
-                tx,
-                address
-            )
-
-            if received < expected_satoshi:
-                return
-
-            amount = (
-                Decimal(
-                    received
-                )
-                / Decimal(
-                    "100000000"
-                )
-            )
-
-            confirmations = int(
-                tx.get(
-                    "confirmations",
-                    0
-                )
-            )
-
-            await handle_deposit_detected(
-                ticket,
-                txid,
-                amount,
-                confirmations
-            )
-
+        if not isinstance(tx, dict):
             return
 
+        received = ltc_received_by_tx(
+            tx,
+            address
+        )
+
+        if received < expected_satoshi:
+            return
+
+        amount = (
+            Decimal(
+                received
+            )
+            / Decimal(
+                "100000000"
+            )
+        )
+
+        confirmations = int(
+            tx.get(
+                "confirmations",
+                0
+            )
+        )
+
+        await handle_deposit_detected(
+            ticket,
+            current_txid,
+            amount,
+            confirmations
+        )
+        return
+
+    txids = await fetch_ltc_address_txids(
+        address
+    )
+
+    if txids is None:
         return
 
     baseline = set(
@@ -4065,11 +4115,7 @@ async def monitor_ltc_ticket(ticket):
         )
     )
 
-    for tx in txs:
-        txid = tx.get(
-            "hash"
-        )
-
+    for txid in txids:
         if not txid:
             continue
 
@@ -4097,6 +4143,13 @@ async def monitor_ltc_ticket(ticket):
                 ]
             )
         ):
+            continue
+
+        tx = await fetch_ltc_transaction(
+            txid
+        )
+
+        if not isinstance(tx, dict):
             continue
 
         received = ltc_received_by_tx(
@@ -4129,7 +4182,6 @@ async def monitor_ltc_ticket(ticket):
             amount,
             confirmations
         )
-
         return
 
 
