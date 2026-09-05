@@ -9,6 +9,7 @@ import secrets
 import time
 import traceback
 import unicodedata
+from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
 
@@ -933,6 +934,66 @@ def normalize_txid(txid):
         .strip()
         .lower()
     )
+
+
+def parse_chain_timestamp(value):
+    if value is None or value == "":
+        return 0
+
+    if isinstance(value, bool):
+        return 0
+
+    if isinstance(value, (int, float)):
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 0
+
+        if number > 10_000_000_000:
+            number //= 1000
+
+        return number
+
+    text = str(value).strip()
+    if not text:
+        return 0
+
+    if text.isdigit():
+        return parse_chain_timestamp(int(text))
+
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+
+        return int(
+            datetime.fromisoformat(text).timestamp()
+        )
+    except (TypeError, ValueError):
+        return 0
+
+
+def payment_started_unix(ticket):
+    try:
+        return int(
+            ticket.get(
+                "payment_started_at"
+            ) or 0
+        )
+    except (TypeError, ValueError):
+        return 0
+
+
+def chain_event_is_before_payment(ticket, *values):
+    started = payment_started_unix(ticket)
+    if started <= 0:
+        return False
+
+    for value in values:
+        timestamp = parse_chain_timestamp(value)
+        if timestamp > 0:
+            return timestamp < started
+
+    return False
 
 
 def is_manual_reference(txid):
@@ -2101,7 +2162,7 @@ def parse_usdt_transfer(transfer):
         )
 
 
-async def fetch_ltc_address_txids(address, token=None):
+async def fetch_ltc_address_data(address, token=None):
     url = (
         "https://api.blockcypher.com/"
         f"v1/ltc/main/addrs/{address}"
@@ -2136,6 +2197,18 @@ async def fetch_ltc_address_txids(address, token=None):
     if not isinstance(data, dict):
         return None
 
+    return data
+
+
+async def fetch_ltc_address_txids(address, token=None):
+    data = await fetch_ltc_address_data(
+        address,
+        token=token
+    )
+
+    if not isinstance(data, dict):
+        return None
+
     hashes = []
     for key in ("txrefs", "unconfirmed_txrefs"):
         items = data.get(key) or []
@@ -2163,6 +2236,60 @@ async def fetch_ltc_address_txids(address, token=None):
     return hashes
 
 
+def ltc_txids_before_payment(ticket, txs=None, address_data=None):
+    started = payment_started_unix(ticket)
+    collected = []
+    seen = set()
+
+    def add_txid(txid, *times):
+        if not txid:
+            return
+
+        normalized = normalize_txid(txid)
+        if normalized in seen:
+            return
+
+        if started:
+            timestamps = [
+                parse_chain_timestamp(value)
+                for value in times
+                if value is not None and value != ""
+            ]
+            timestamps = [
+                value for value in timestamps
+                if value > 0
+            ]
+            if not timestamps or min(timestamps) >= started:
+                return
+
+        seen.add(normalized)
+        collected.append(normalized)
+
+    if isinstance(address_data, dict):
+        for item in address_data.get("txrefs") or []:
+            if not isinstance(item, dict):
+                continue
+
+            add_txid(
+                item.get("tx_hash") or item.get("hash"),
+                item.get("confirmed"),
+                item.get("received")
+            )
+
+    if isinstance(txs, list):
+        for tx in txs:
+            if not isinstance(tx, dict):
+                continue
+
+            add_txid(
+                tx.get("hash"),
+                tx.get("confirmed"),
+                tx.get("received")
+            )
+
+    return collected
+
+
 async def create_baseline_once(ticket):
     if ticket[
         "type"
@@ -2175,35 +2302,36 @@ async def create_baseline_once(ticket):
 
             return True
 
-        txids = await fetch_ltc_address_txids(
-            ticket[
-                "deposit_address"
-            ]
+        address = ticket[
+            "deposit_address"
+        ]
+        address_data = await fetch_ltc_address_data(
+            address
         )
 
-        if txids is None:
+        if address_data is None:
             txs = await fetch_ltc_transactions(
-                ticket[
-                    "deposit_address"
-                ]
+                address
             )
 
             if txs is None:
                 return False
 
-            txids = [
-                tx.get("hash")
-                for tx in txs
-                if tx.get("hash")
-            ]
+            ticket[
+                "baseline_txids"
+            ] = ltc_txids_before_payment(
+                ticket,
+                txs=txs
+            )
+
+            return True
 
         ticket[
             "baseline_txids"
-        ] = [
-            normalize_txid(txid)
-            for txid in txids
-            if txid
-        ]
+        ] = ltc_txids_before_payment(
+            ticket,
+            address_data=address_data
+        )
 
         return True
 
@@ -2223,20 +2351,29 @@ async def create_baseline_once(ticket):
     if transfers is None:
         return False
 
-    ticket[
-        "baseline_txids"
-    ] = [
-        normalize_txid(
-            item.get(
-                "hash"
-            )
-        )
-        for item
-        in transfers
-        if item.get(
+    started = payment_started_unix(ticket)
+    baseline = []
+    for item in transfers:
+        txid = item.get(
             "hash"
         )
-    ]
+        if not txid:
+            continue
+
+        if started:
+            timestamp = parse_chain_timestamp(
+                item.get("timeStamp")
+            )
+            if timestamp >= started:
+                continue
+
+        baseline.append(
+            normalize_txid(txid)
+        )
+
+    ticket[
+        "baseline_txids"
+    ] = baseline
 
     return True
 
@@ -2262,6 +2399,54 @@ async def create_baseline(ticket):
             await asyncio.sleep(15)
     finally:
         BASELINE_IN_PROGRESS = max(0, BASELINE_IN_PROGRESS - 1)
+
+
+async def run_baseline_task(ticket):
+    key = str(
+        ticket.get("channel_id")
+    )
+
+    try:
+        ok = await create_baseline(ticket)
+        current = get_ticket(
+            ticket.get("channel_id")
+        )
+
+        if ok and current is not None:
+            current["baseline_ready"] = True
+            await save_data()
+            log_action(
+                "baseline_ready",
+                ticket=current.get("number"),
+                asset=get_asset_name(current),
+                known=len(current.get("baseline_txids") or [])
+            )
+    except asyncio.CancelledError:
+        return
+    except Exception:
+        logger.exception(
+            "Baseline task failed for ticket %s",
+            ticket.get("number")
+        )
+    finally:
+        running = BASELINE_TASKS.get(key)
+        if running is asyncio.current_task():
+            BASELINE_TASKS.pop(key, None)
+
+
+def start_baseline(ticket):
+    channel_id = ticket.get("channel_id")
+    if channel_id is None:
+        return
+
+    key = str(channel_id)
+    existing = BASELINE_TASKS.get(key)
+    if existing is not None and not existing.done():
+        return
+
+    BASELINE_TASKS[key] = asyncio.create_task(
+        run_baseline_task(ticket)
+    )
 
 
 async def resolve_trader(
@@ -3569,58 +3754,9 @@ async def send_payment_info(
         "manual_reference"
     ] = None
 
-    channel_key = str(
-        ticket[
-            "channel_id"
-        ]
-    )
-
-    baseline_task = asyncio.create_task(
-        create_baseline(
-            ticket
-        )
-    )
-    BASELINE_TASKS[channel_key] = baseline_task
-
-    waiting_message = None
-    try:
-        done, _pending = await asyncio.wait(
-            {baseline_task},
-            timeout=2
-        )
-
-        if not baseline_task.done():
-            try:
-                waiting_message = await channel.send(
-                    embed=discord.Embed(
-                        description=(
-                            f"{emoji_text(BLUE_LOADING_EMOJI)}"
-                            "• **Preparing payment details...**"
-                        ),
-                        colour=COLOR_NEUTRAL
-                    )
-                )
-            except discord.HTTPException:
-                waiting_message = None
-
-            try:
-                await baseline_task
-            except asyncio.CancelledError:
-                return False
-    finally:
-        BASELINE_TASKS.pop(channel_key, None)
-
-    if waiting_message is not None:
-        try:
-            await waiting_message.delete()
-        except discord.HTTPException:
-            pass
-
-    if get_ticket(ticket.get("channel_id")) is None:
-        return False
-
-    if baseline_task.cancelled() or not baseline_task.done():
-        return False
+    ticket[
+        "baseline_ready"
+    ] = False
 
     ticket[
         "status"
@@ -3633,6 +3769,10 @@ async def send_payment_info(
     )
 
     await save_data()
+
+    start_baseline(
+        ticket
+    )
 
     log_action(
         "payment_details_ready",
@@ -4180,6 +4320,13 @@ async def monitor_ltc_ticket(ticket):
         if not isinstance(tx, dict):
             continue
 
+        if chain_event_is_before_payment(
+            ticket,
+            tx.get("confirmed"),
+            tx.get("received")
+        ):
+            continue
+
         received = ltc_received_by_tx(
             tx,
             address
@@ -4342,6 +4489,12 @@ async def monitor_usdt_ticket(ticket):
         if not valid_usdt_transfer(
             transfer,
             address
+        ):
+            continue
+
+        if chain_event_is_before_payment(
+            ticket,
+            transfer.get("timeStamp")
         ):
             continue
 
@@ -10171,6 +10324,14 @@ async def resume_ticket_tasks():
             "waiting_deposit",
             "deposit_unconfirmed"
         }:
+            if (
+                status == "waiting_deposit"
+                and not ticket.get("baseline_ready")
+            ):
+                start_baseline(
+                    ticket
+                )
+
             ensure_monitor(
                 ticket
             )
