@@ -19,7 +19,7 @@ from discord.ext import commands
 from colorama import Fore, Style, init as colorama_init
 
 
-TOKEN = "MTU0MzY0MTI3ODQ5ODIxODE2NA.GkdFj_.C0PSPiLD7T6SRukoACVdkE6gR12MCkaBNQiWN4" # Get from Discord Developer Portal
+TOKEN = "" # Get from Discord Developer Portal
 YOUR_USER = 1506688372045910227 # Your User ID
 STAFF_COMMAND_ROLE = 1544772439014121572
 TOS_CHANNEL = 1543637559463256214 # Middleman ToS Channel ID
@@ -40,8 +40,8 @@ BLOCKCYPHER_TOKEN = "692da515d0ed4d4e9fd6352efcbe727b" # Get from https://www.bl
 ETHERSCAN_API_KEY = "5M7Q4T5GX35IUUJ49HSC71JUUAD2F726E1" # Get from https://etherscan.io/api
 
 # Live tickets. Use a second BlockCypher / Etherscan account here.
-TICKET_BLOCKCYPHER_TOKEN = "" # Second BlockCypher token for tickets
-TICKET_ETHERSCAN_API_KEY = "" # Second Etherscan key for tickets
+TICKET_BLOCKCYPHER_TOKEN = "fb1a4f21dc1f4f7ca2172e31091fd382" # Second BlockCypher token for tickets
+TICKET_ETHERSCAN_API_KEY = "GU2JTN53158HUA6S9BA3D4HN6K9TY3TM6T" # Second Etherscan key for tickets
 
 COINBASE_LTC_PRICE_URL = "https://api.coinbase.com/v2/prices/LTC-USD/spot"
 
@@ -152,15 +152,16 @@ JACES_RATE_WAIT_UNTIL = 0.0
 TICKET_LOCKS = {}
 MONITOR_TASKS = {}
 COUNTDOWN_TASKS = {}
+BASELINE_TASKS = {}
+BASELINE_IN_PROGRESS = 0
+TICKET_CHAIN_CACHE = {}
+TICKET_CHAIN_CACHE_LOCK = asyncio.Lock()
 
 READY_RESUME_LOCK = asyncio.Lock()
 
 READY_RESUMED = False
 BANNER_PRINTED = False
 DEMO_ACTIVITY_TASK = None
-BASELINE_IN_PROGRESS = 0
-TICKET_CHAIN_CACHE = {}
-TICKET_CHAIN_CACHE_LOCK = asyncio.Lock()
 
 
 colorama_init(autoreset=True)
@@ -175,6 +176,7 @@ ASCII_WATERMARK = r"""
                            |___/ 
                 honey.py
 """
+
 
 
 
@@ -2245,6 +2247,9 @@ async def create_baseline(ticket):
     BASELINE_IN_PROGRESS += 1
     try:
         while True:
+            if get_ticket(ticket.get("channel_id")) is None:
+                return False
+
             if await create_baseline_once(ticket):
                 return True
 
@@ -3564,35 +3569,58 @@ async def send_payment_info(
         "manual_reference"
     ] = None
 
+    channel_key = str(
+        ticket[
+            "channel_id"
+        ]
+    )
+
     baseline_task = asyncio.create_task(
         create_baseline(
             ticket
         )
     )
+    BASELINE_TASKS[channel_key] = baseline_task
 
     waiting_message = None
-    done, _pending = await asyncio.wait(
-        {baseline_task},
-        timeout=2
-    )
-
-    if not baseline_task.done():
-        waiting_message = await channel.send(
-            embed=discord.Embed(
-                description=(
-                    f"{emoji_text(BLUE_LOADING_EMOJI)}"
-                    "• **Preparing payment details...**"
-                ),
-                colour=COLOR_NEUTRAL
-            )
+    try:
+        done, _pending = await asyncio.wait(
+            {baseline_task},
+            timeout=2
         )
-        await baseline_task
+
+        if not baseline_task.done():
+            try:
+                waiting_message = await channel.send(
+                    embed=discord.Embed(
+                        description=(
+                            f"{emoji_text(BLUE_LOADING_EMOJI)}"
+                            "• **Preparing payment details...**"
+                        ),
+                        colour=COLOR_NEUTRAL
+                    )
+                )
+            except discord.HTTPException:
+                waiting_message = None
+
+            try:
+                await baseline_task
+            except asyncio.CancelledError:
+                return False
+    finally:
+        BASELINE_TASKS.pop(channel_key, None)
 
     if waiting_message is not None:
         try:
             await waiting_message.delete()
         except discord.HTTPException:
             pass
+
+    if get_ticket(ticket.get("channel_id")) is None:
+        return False
+
+    if baseline_task.cancelled() or not baseline_task.done():
+        return False
 
     ticket[
         "status"
@@ -4552,6 +4580,46 @@ def cancel_countdown(
         and not task.done()
     ):
         task.cancel()
+
+
+async def stop_ticket_chain(channel_id, reason="channel deleted"):
+    if channel_id is None:
+        return False
+
+    try:
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        return False
+
+    key = str(channel_id)
+
+    baseline_task = BASELINE_TASKS.pop(key, None)
+    if baseline_task is not None and not baseline_task.done():
+        baseline_task.cancel()
+
+    monitor_task = MONITOR_TASKS.pop(key, None)
+    if monitor_task is not None and not monitor_task.done():
+        monitor_task.cancel()
+
+    cancel_countdown(channel_id, "release")
+    cancel_countdown(channel_id, "address")
+    TICKET_LOCKS.pop(key, None)
+
+    async with DATA_LOCK:
+        removed = DATA.get("tickets", {}).pop(key, None)
+        if removed is not None:
+            save_data_now()
+
+    if removed is None and baseline_task is None and monitor_task is None:
+        return False
+
+    log_action(
+        "ticket_chain_stopped",
+        channel_id=channel_id,
+        ticket=(removed or {}).get("number"),
+        reason=reason
+    )
+    return True
 
 
 def start_countdown(
@@ -5714,6 +5782,19 @@ async def close_ticket_channel(
         and not monitor_task.done()
     ):
         monitor_task.cancel()
+
+    baseline_task = BASELINE_TASKS.pop(
+        str(
+            channel.id
+        ),
+        None
+    )
+
+    if (
+        baseline_task is not None
+        and not baseline_task.done()
+    ):
+        baseline_task.cancel()
 
     cancel_countdown(
         channel.id,
@@ -10003,6 +10084,12 @@ class JaceBot(
                 task.cancel()
 
         for task in list(
+            BASELINE_TASKS.values()
+        ):
+            if not task.done():
+                task.cancel()
+
+        for task in list(
             COUNTDOWN_TASKS.values()
         ):
             if not task.done():
@@ -10065,6 +10152,17 @@ async def resume_ticket_tasks():
             "tickets"
         ].values()
     ):
+        channel = await resolve_ticket_channel(
+            ticket
+        )
+
+        if channel is None:
+            await stop_ticket_chain(
+                ticket.get("channel_id"),
+                "ticket channel missing"
+            )
+            continue
+
         status = ticket.get(
             "status"
         )
@@ -10161,6 +10259,22 @@ async def on_ready():
 @bot.event
 async def on_guild_join(guild):
     await sync_slash_commands(guild)
+
+
+@bot.event
+async def on_raw_channel_delete(payload):
+    await stop_ticket_chain(
+        payload.channel_id,
+        "channel deleted"
+    )
+
+
+@bot.event
+async def on_guild_channel_delete(channel):
+    await stop_ticket_chain(
+        getattr(channel, "id", None),
+        "channel deleted"
+    )
 
 
 @bot.event
