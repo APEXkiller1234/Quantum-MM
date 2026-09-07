@@ -12,6 +12,7 @@ import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from pathlib import Path
+from urllib.parse import quote
 
 import aiohttp
 import discord
@@ -109,6 +110,60 @@ NORMAL_BOT_ACTIVITY_TYPE = "Cooking Roblox"
 NORMAL_BOT_ACTIVITY = ""
 NORMAL_BOT_BIO = "HORIZONNNNNNNNNNNNNNN"
 
+# ===== Halal mode =====
+# Same switch as /jaces and /nonjaces. Fill these in; leave "" to skip that field.
+
+HALAL_SERVER_NAME = ""
+HALAL_SERVER_DESCRIPTION = ""
+HALAL_SERVER_ICON = ""
+HALAL_SERVER_BANNER = ""
+HALAL_BOT_NAME = ""
+HALAL_BOT_AVATAR = ""
+HALAL_BOT_BANNER = ""
+HALAL_BOT_ROLE_NAME = ""
+HALAL_BOT_STATUS = ""
+HALAL_BOT_ACTIVITY_TYPE = ""
+HALAL_BOT_ACTIVITY = ""
+HALAL_BOT_BIO = ""
+
+HALAL_WEBSITE_URL = "" # Linked as "website" in Halal tickets
+HALAL_TOS_URL = "" # Linked as "Terms of Service" on the Halal panel
+HALAL_KNOWN_SCAMS_URL = "" # Linked as "known scams" in the safety warning
+HALAL_WELCOME_IMAGE = "" # Deal Started thumbnail
+HALAL_MASCOT_IMAGE = "" # Thumbnails on payment / detected / complete cards
+
+HALAL_TICKET_CATEGORY = 0 # 0 = use TICKET_CATEGORY
+HALAL_COMPLETED_CHANNEL = 0 # 0 = use COMPLETED_TRANSACTION_CHANNEL
+HALAL_STARTING_TICKET_NUMBER = 2135780
+HALAL_MIN_USD = "1.00"
+HALAL_UNPAID_TIMEOUT_SECONDS = 1800
+HALAL_AUTO_CLOSE_SECONDS = 300
+HALAL_CONFIRMATIONS = 1
+HALAL_SOLANA_RPC = "https://api.mainnet-beta.solana.com"
+
+# Deposit addresses for Halal tickets. Leave "" until you set them.
+HALAL_BTC_ADDRESS = ""
+HALAL_ETH_ADDRESS = ""
+HALAL_LTC_ADDRESS = "" # Blank uses LTC_DEPOSIT_ADDRESS
+HALAL_SOL_ADDRESS = ""
+HALAL_USDT_ERC20_ADDRESS = ""
+HALAL_USDC_ERC20_ADDRESS = ""
+HALAL_USDT_BEP20_ADDRESS = "" # Blank uses USDT_DEPOSIT_ADDRESS
+HALAL_USDT_SOL_ADDRESS = ""
+HALAL_USDC_SOL_ADDRESS = ""
+
+USDT_ERC20_CONTRACT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
+USDC_ERC20_CONTRACT = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
+USDT_SOL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+USDC_SOL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+
+HALAL_BTC_EMOJI = ""
+HALAL_ETH_EMOJI = ""
+HALAL_LTC_EMOJI = ""
+HALAL_SOL_EMOJI = ""
+HALAL_USDT_EMOJI = ""
+HALAL_USDC_EMOJI = ""
+
 
 # ===== Emojis ========
 
@@ -131,6 +186,10 @@ COLOR_ERROR = 0xDB504C
 COLOR_WARNING = 0xF3AA3C
 COLOR_BLURPLE = 0x5B65EA
 COLOR_USDT = 0x509F7D
+COLOR_HALAL_GREEN = 0x23A559
+COLOR_HALAL_RED = 0xED4245
+COLOR_HALAL_ORANGE = 0xF0B232
+COLOR_HALAL_GRAY = 0x4E5058
 
 DOT = "﹒"
 H1 = chr(35)
@@ -148,7 +207,9 @@ JACES_PERM_CONCURRENCY = 8
 JACES_RATE_RETRY_SECONDS = 15
 JACES_REASON_ON = "Jaces mode"
 JACES_REASON_OFF = "Jaces mode revert"
+JACES_REASON_HALAL = "Halal mode"
 JACES_RATE_WAIT_UNTIL = 0.0
+HALAL_CLOSE_TASKS = {}
 
 TICKET_LOCKS = {}
 MONITOR_TASKS = {}
@@ -319,7 +380,8 @@ def default_data():
             "guilds": {}
         },
         "presence": default_presence(),
-        "rank_roles": []
+        "rank_roles": [],
+        "next_halal_ticket_number": HALAL_STARTING_TICKET_NUMBER
     }
 
 
@@ -380,6 +442,11 @@ def load_data():
         data.setdefault(
             "rank_roles",
             []
+        )
+
+        data.setdefault(
+            "next_halal_ticket_number",
+            HALAL_STARTING_TICKET_NUMBER
         )
 
         return data
@@ -451,6 +518,27 @@ async def reserve_ticket_number():
 
         DATA[
             "next_ticket_number"
+        ] = number + 1
+
+        save_data_now()
+
+        return number
+
+
+async def reserve_halal_ticket_number():
+    async with DATA_LOCK:
+        number = int(
+            DATA.get(
+                "next_halal_ticket_number",
+                HALAL_STARTING_TICKET_NUMBER
+            )
+        )
+
+        if number < HALAL_STARTING_TICKET_NUMBER:
+            number = HALAL_STARTING_TICKET_NUMBER
+
+        DATA[
+            "next_halal_ticket_number"
         ] = number + 1
 
         save_data_now()
@@ -549,6 +637,10 @@ def get_channel_mention(channel_id):
 
 
 def get_asset_name(ticket):
+    if ticket.get("system") == "halal":
+        coin = halal_coins().get(str(ticket.get("type") or ""), {})
+        return coin.get("short") or "CRYPTO"
+
     return (
         "LTC"
         if ticket["type"] == "ltc"
@@ -581,6 +673,13 @@ def get_deposit_address(ticket):
 
 
 def confirmations_required(ticket):
+    if ticket.get("system") == "halal":
+        try:
+            coin = halal_coins().get(str(ticket.get("type") or ""), {})
+            return int(coin.get("confirmations") or HALAL_CONFIRMATIONS)
+        except Exception:
+            return HALAL_CONFIRMATIONS
+
     return (
         LTC_CONFIRMATIONS_REQUIRED
         if ticket["type"] == "ltc"
@@ -654,6 +753,7 @@ def parse_non_negative_int(value):
 def default_user_stats():
     return {
         "deals_completed": 0,
+        "deals_started": 0,
         "total_usd_value": "0.00",
         "biggest_deal": "0.00"
     }
@@ -668,6 +768,7 @@ def get_user_stats(user_id):
         return stats
 
     stats.setdefault("deals_completed", 0)
+    stats.setdefault("deals_started", 0)
     stats.setdefault("total_usd_value", "0.00")
     stats.setdefault("biggest_deal", "0.00")
     return stats
@@ -744,7 +845,14 @@ def rank_line(label, item):
     )
 
 
-def stats_embed(user):
+def stats_embed(user, guild=None):
+    if guild is not None:
+        try:
+            if guild_mode(jaces_guild_state(guild.id)) == "halal":
+                return halal_stats_embed(user)
+        except Exception:
+            pass
+
     data = get_user_stats(user.id)
     current, nxt = rank_progress(data.get("total_usd_value", "0"))
 
@@ -842,6 +950,9 @@ def crypto_amount_text(
     ticket,
     value=None
 ):
+    if ticket.get("system") == "halal":
+        return halal_amount_text(ticket, value)
+
     if value is None:
         value = ticket.get(
             "crypto_amount",
@@ -1022,10 +1133,24 @@ def tx_link(
     txid,
     asset
 ):
-    if asset == "ltc":
+    asset = str(asset or "").lower()
+
+    if asset in {"ltc", "btc"}:
         return (
             "https://live.blockcypher.com/"
-            f"ltc/tx/{txid}/"
+            f"{asset}/tx/{txid}/"
+        )
+
+    if asset in {"eth", "usdt_erc20", "usdc_erc20"}:
+        return (
+            "https://etherscan.io/"
+            f"tx/{txid}"
+        )
+
+    if asset in {"sol", "usdt_sol", "usdc_sol"}:
+        return (
+            "https://solscan.io/"
+            f"tx/{txid}"
         )
 
     return (
@@ -1357,6 +1482,41 @@ async def http_get_json(
             last_error
         )
 
+    return None
+
+
+async def http_post_json(url, payload, timeout=20, wait_on_rate_limit=True):
+    last_error = None
+    attempt = 0
+    attempts = 3
+
+    while attempt < attempts:
+        try:
+            async with bot.session.post(
+                url,
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as response:
+                status = response.status
+                if status == 200:
+                    return await response.json()
+
+                body = await response.text()
+                last_error = RuntimeError(f"HTTP {status}: {body[:300]}")
+                if wait_on_rate_limit and is_rate_limit_error(status, body):
+                    wait = http_retry_after(response)
+                    log_action("chain_rate_limited", url=url, retry_in=int(wait))
+                    await asyncio.sleep(wait)
+                    continue
+        except Exception as error:
+            last_error = error
+
+        attempt += 1
+        if attempt < attempts:
+            await asyncio.sleep(1.5 * attempt)
+
+    if last_error:
+        logger.warning("HTTP POST failed for %s: %s", url, last_error)
     return None
 
 
@@ -2291,6 +2451,9 @@ def ltc_txids_before_payment(ticket, txs=None, address_data=None):
 
 
 async def create_baseline_once(ticket):
+    if is_halal_ticket(ticket):
+        return await create_halal_baseline_once(ticket)
+
     if ticket[
         "type"
     ] == "ltc":
@@ -4565,12 +4728,21 @@ async def monitor_ticket(channel_id):
                 "status"
             ) not in {
                 "waiting_deposit",
-                "deposit_unconfirmed"
+                "deposit_unconfirmed",
+                "halal_amount"
             }:
                 return
 
             try:
-                if (
+                if is_halal_ticket(ticket):
+                    if ticket.get("status") in {
+                        "waiting_deposit",
+                        "deposit_unconfirmed"
+                    }:
+                        await monitor_halal_ticket(
+                            ticket
+                        )
+                elif (
                     ticket[
                         "type"
                     ] == "ltc"
@@ -4606,29 +4778,39 @@ async def monitor_ticket(channel_id):
             if ticket is None:
                 return
 
-            if (
-                AUTO_CLOSE_UNPAID
-                and ticket.get(
-                    "status"
-                )
-                == "waiting_deposit"
-            ):
+            timeout_limit = (
+                HALAL_UNPAID_TIMEOUT_SECONDS
+                if is_halal_ticket(ticket)
+                else UNPAID_TIMEOUT_SECONDS
+            )
+            timeout_status = ticket.get("status")
+            started = 0
+            if timeout_status == "waiting_deposit":
                 started = int(
                     ticket.get(
                         "payment_started_at",
-                        int(
-                            time.time()
-                        )
+                        int(time.time())
+                    )
+                )
+            elif (
+                is_halal_ticket(ticket)
+                and timeout_status == "halal_amount"
+            ):
+                started = int(
+                    ticket.get(
+                        "amount_started_at",
+                        int(time.time())
                     )
                 )
 
-                if (
-                    int(
-                        time.time()
-                    )
-                    - started
-                    >= UNPAID_TIMEOUT_SECONDS
-                ):
+            if (
+                AUTO_CLOSE_UNPAID
+                and started
+                and (
+                    int(time.time()) - started
+                    >= timeout_limit
+                )
+            ):
                     channel = await resolve_ticket_channel(
                         ticket
                     )
@@ -4745,6 +4927,10 @@ async def stop_ticket_chain(channel_id, reason="channel deleted"):
         return False
 
     key = str(channel_id)
+
+    close_task = HALAL_CLOSE_TASKS.pop(key, None)
+    if close_task is not None and not close_task.done():
+        close_task.cancel()
 
     baseline_task = BASELINE_TASKS.pop(key, None)
     if baseline_task is not None and not baseline_task.done():
@@ -5696,9 +5882,14 @@ async def finalize_withdrawal(
         simulation=simulation
     )
 
-    await send_completion_outputs(
-        ticket
-    )
+    if is_halal_ticket(ticket):
+        await send_halal_completion(
+            ticket
+        )
+    else:
+        await send_completion_outputs(
+            ticket
+        )
 
     guild = bot.get_guild(
         int(
@@ -9261,11 +9452,2800 @@ class AutoMMTosView(
         )
 
 
+HALAL_DEAL_TYPES = [
+    (
+        "robux",
+        "Robux",
+        "Before continuing, please state the Robux amount, delivery method (game pass, group payout, or ingame gift), and both Roblox usernames.",
+        "Ex. 50,000 Robux via gamepass, SellerUser → BuyerUser"
+    ),
+    (
+        "adoptme",
+        "Adopt Me",
+        "Before continuing, please state the Adopt Me items, both Roblox usernames, and how the items will be delivered.",
+        "Ex. Frost Dragon via trade, SellerUser → BuyerUser"
+    ),
+    (
+        "mm2",
+        "MM2",
+        "Before continuing, please state the Murder Mystery 2 items, both Roblox usernames, and how they will be traded.",
+        "Ex. Chroma Laser via trade, SellerUser → BuyerUser"
+    ),
+    (
+        "limiteds",
+        "Limiteds",
+        "Before continuing, please state the limited items, both Roblox usernames, and the delivery method.",
+        "Ex. Korblox via trade, SellerUser → BuyerUser"
+    ),
+    (
+        "nitro",
+        "Discord Nitro",
+        "Before continuing, please state the Nitro type, duration, and how it will be delivered.",
+        "Ex. Nitro Boost 1 month via gift link"
+    ),
+    (
+        "items",
+        "In-game Items",
+        "Before continuing, please state the game, items, usernames, and delivery method.",
+        "Ex. 10k coins via in-game mail, SellerUser → BuyerUser"
+    ),
+    (
+        "accounts",
+        "Accounts",
+        "Before continuing, please state the account type and what is included.",
+        "Ex. Roblox account with limiteds, delivered via login"
+    ),
+    (
+        "other",
+        "Other",
+        "Before continuing, please state exactly what is being traded and how it will be delivered.",
+        "Ex. Describe the deal clearly"
+    )
+]
+
+
+def halal_md_link(label, url):
+    url = cleaned_secret(url)
+    if not url:
+        return label
+    return f"[{label}]({url})"
+
+
+def halal_thumb(url):
+    url = cleaned_secret(url)
+    if not url:
+        return None
+    return discord.ui.Thumbnail(url)
+
+
+def qr_image_url(data):
+    return (
+        "https://api.qrserver.com/v1/create-qr-code/"
+        f"?size=180x180&data={quote(str(data or ''), safe='')}"
+    )
+
+
+def halal_emoji_or(configured, fallback):
+    return cleaned_secret(configured) or fallback
+
+
+def halal_coins():
+    return {
+        "btc": {
+            "key": "btc",
+            "label": "Bitcoin",
+            "short": "BTC",
+            "panel": "Bitcoin",
+            "group": "crypto",
+            "family": "utxo",
+            "chain": "btc",
+            "decimals": 8,
+            "price": "BTC-USD",
+            "confirmations": 1,
+            "explorer": "BlockCypher",
+            "emoji": halal_emoji_or(HALAL_BTC_EMOJI, "₿"),
+            "address": cleaned_secret(HALAL_BTC_ADDRESS)
+        },
+        "eth": {
+            "key": "eth",
+            "label": "Ethereum",
+            "short": "ETH",
+            "panel": "Ethereum",
+            "group": "crypto",
+            "family": "eth",
+            "chain_id": "1",
+            "decimals": 18,
+            "display_decimals": 8,
+            "price": "ETH-USD",
+            "confirmations": 1,
+            "explorer": "Etherscan",
+            "emoji": halal_emoji_or(HALAL_ETH_EMOJI, "◆"),
+            "address": cleaned_secret(HALAL_ETH_ADDRESS)
+        },
+        "ltc": {
+            "key": "ltc",
+            "label": "Litecoin",
+            "short": "LTC",
+            "panel": "Litecoin",
+            "group": "crypto",
+            "family": "utxo",
+            "chain": "ltc",
+            "decimals": 8,
+            "price": "LTC-USD",
+            "confirmations": LTC_CONFIRMATIONS_REQUIRED,
+            "explorer": "BlockCypher",
+            "emoji": halal_emoji_or(HALAL_LTC_EMOJI, LTC_EMOJI or "Ł"),
+            "address": cleaned_secret(HALAL_LTC_ADDRESS) or LTC_DEPOSIT_ADDRESS
+        },
+        "sol": {
+            "key": "sol",
+            "label": "Solana",
+            "short": "SOL",
+            "panel": "Solana",
+            "group": "crypto",
+            "family": "sol",
+            "decimals": 9,
+            "display_decimals": 8,
+            "price": "SOL-USD",
+            "confirmations": 1,
+            "explorer": "Solscan",
+            "emoji": halal_emoji_or(HALAL_SOL_EMOJI, "◎"),
+            "address": cleaned_secret(HALAL_SOL_ADDRESS)
+        },
+        "usdt_erc20": {
+            "key": "usdt_erc20",
+            "label": "USDT (ERC-20)",
+            "short": "USDT",
+            "panel": "USDT (ERC-20)",
+            "group": "stable",
+            "family": "erc20",
+            "chain_id": "1",
+            "contract": USDT_ERC20_CONTRACT,
+            "decimals": 6,
+            "display_decimals": 4,
+            "price": None,
+            "confirmations": 1,
+            "explorer": "Etherscan",
+            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "address": cleaned_secret(HALAL_USDT_ERC20_ADDRESS)
+        },
+        "usdc_erc20": {
+            "key": "usdc_erc20",
+            "label": "USDC (ERC-20)",
+            "short": "USDC",
+            "panel": "USDC (ERC-20)",
+            "group": "stable",
+            "family": "erc20",
+            "chain_id": "1",
+            "contract": USDC_ERC20_CONTRACT,
+            "decimals": 6,
+            "display_decimals": 4,
+            "price": None,
+            "confirmations": 1,
+            "explorer": "Etherscan",
+            "emoji": halal_emoji_or(HALAL_USDC_EMOJI, "USD"),
+            "address": cleaned_secret(HALAL_USDC_ERC20_ADDRESS)
+        },
+        "usdt_bep20": {
+            "key": "usdt_bep20",
+            "label": "USDT (BEP-20)",
+            "short": "USDT",
+            "panel": "USDT (BEP-20)",
+            "group": "stable",
+            "family": "bep20",
+            "chain_id": BSC_CHAIN_ID,
+            "contract": USDT_BEP20_CONTRACT,
+            "decimals": 18,
+            "display_decimals": 4,
+            "price": None,
+            "confirmations": USDT_CONFIRMATIONS_REQUIRED,
+            "explorer": "BscScan",
+            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "address": cleaned_secret(HALAL_USDT_BEP20_ADDRESS) or USDT_DEPOSIT_ADDRESS
+        },
+        "usdt_sol": {
+            "key": "usdt_sol",
+            "label": "USDT (SOL)",
+            "short": "USDT",
+            "panel": "USDT (SOL)",
+            "group": "stable",
+            "family": "spl",
+            "mint": USDT_SOL_MINT,
+            "decimals": 6,
+            "display_decimals": 4,
+            "price": None,
+            "confirmations": 1,
+            "explorer": "Solscan",
+            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "address": cleaned_secret(HALAL_USDT_SOL_ADDRESS)
+        },
+        "usdc_sol": {
+            "key": "usdc_sol",
+            "label": "USDC (SOL)",
+            "short": "USDC",
+            "panel": "USDC (SOL)",
+            "group": "stable",
+            "family": "spl",
+            "mint": USDC_SOL_MINT,
+            "decimals": 6,
+            "display_decimals": 4,
+            "price": None,
+            "confirmations": 1,
+            "explorer": "Solscan",
+            "emoji": halal_emoji_or(HALAL_USDC_EMOJI, "USD"),
+            "address": cleaned_secret(HALAL_USDC_SOL_ADDRESS)
+        }
+    }
+
+
+def halal_coin(ticket_or_key):
+    if isinstance(ticket_or_key, dict):
+        key = ticket_or_key.get("type")
+    else:
+        key = ticket_or_key
+    return halal_coins().get(str(key or ""), {})
+
+
+def is_halal_ticket(ticket):
+    return isinstance(ticket, dict) and ticket.get("system") == "halal"
+
+
+def halal_deal_type(ticket):
+    key = str(ticket.get("deal_type") or "")
+    for item in HALAL_DEAL_TYPES:
+        if item[0] == key:
+            return item
+    return None
+
+
+def format_crypto_precise(amount, decimals):
+    quantized = Decimal(str(amount)).quantize(
+        Decimal(10) ** -int(decimals),
+        rounding=ROUND_DOWN
+    )
+    text = f"{quantized:f}"
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def halal_amount_text(ticket, value=None):
+    coin = halal_coin(ticket)
+    decimals = int(coin.get("display_decimals") or coin.get("decimals") or 8)
+    if value is None:
+        value = ticket.get("crypto_amount") or "0"
+    return format_crypto_precise(value, decimals)
+
+
+def halal_min_usd():
+    try:
+        amount = Decimal(str(HALAL_MIN_USD))
+    except (InvalidOperation, TypeError):
+        amount = Decimal("1.00")
+    if amount <= 0:
+        amount = Decimal("1.00")
+    return amount.quantize(Decimal("0.01"))
+
+
+async def get_coinbase_spot(pair):
+    data = await http_get_json(
+        f"https://api.coinbase.com/v2/prices/{pair}/spot",
+        headers={"Accept": "application/json"},
+        attempts=3,
+        timeout=10
+    )
+    if not isinstance(data, dict):
+        return None
+    try:
+        price = Decimal(str(data["data"]["amount"]))
+        if price.is_finite() and price > 0:
+            return price
+    except (KeyError, TypeError, ValueError, InvalidOperation):
+        return None
+    return None
+
+
+def mention_or_none(user_id):
+    if not user_id:
+        return "None"
+    return f"<@{int(user_id)}>"
+
+
+def party_ids(ticket):
+    ids = set()
+    for key in ("opener_id", "trader_id", "sender_id", "receiver_id"):
+        value = ticket.get(key)
+        if value:
+            ids.add(int(value))
+    return ids
+
+
+def is_halal_party(user, ticket):
+    try:
+        return int(user.id) in party_ids(ticket)
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+async def get_halal_ticket_category(guild):
+    channel_id = int(HALAL_TICKET_CATEGORY or 0) or TICKET_CATEGORY
+    configured = guild.get_channel(channel_id)
+    if configured is None:
+        try:
+            configured = await bot.fetch_channel(channel_id)
+        except discord.HTTPException:
+            return None
+    if isinstance(configured, discord.CategoryChannel):
+        return configured
+    category = getattr(configured, "category", None)
+    if isinstance(category, discord.CategoryChannel):
+        return category
+    return None
+
+
+def record_deal_started(ticket):
+    for user_id in {str(ticket.get("opener_id") or ""), str(ticket.get("trader_id") or "")}:
+        if not user_id:
+            continue
+        stats = get_user_stats(user_id)
+        stats["deals_started"] = int(stats.get("deals_started") or 0) + 1
+
+
+def completion_rate_text(stats):
+    started = int(stats.get("deals_started") or 0)
+    completed = int(stats.get("deals_completed") or 0)
+    if started <= 0:
+        if completed <= 0:
+            return "100%"
+        started = completed
+    rate = min(100.0, (completed / started) * 100.0)
+    if rate >= 100:
+        return "100%"
+    if rate == int(rate):
+        return f"{int(rate)}%"
+    return f"{rate:.1f}%"
+
+
+def halal_stats_embed(user):
+    data = get_user_stats(user.id)
+    embed = discord.Embed(
+        title=user.name,
+        colour=COLOR_HALAL_GREEN
+    )
+    embed.set_thumbnail(url=user.display_avatar.url)
+    embed.add_field(
+        name="Deals completed",
+        value=str(int(data.get("deals_completed") or 0)),
+        inline=False
+    )
+    embed.add_field(
+        name="Total USD Value",
+        value=money(data.get("total_usd_value") or "0"),
+        inline=False
+    )
+    embed.add_field(
+        name="Completion rate",
+        value=completion_rate_text(data),
+        inline=False
+    )
+    return embed
+
+
+def explorer_name_for(ticket):
+    return halal_coin(ticket).get("explorer") or "Explorer"
+
+
+class TinyLayout(discord.ui.LayoutView):
+    def __init__(self, *items, accent=COLOR_HALAL_GRAY):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.Container(*items, accent_colour=accent))
+
+
+def halal_text_container(text, accent):
+    view = TinyLayout(
+        discord.ui.TextDisplay(text),
+        accent=accent
+    )
+    return view
+
+
+def with_optional_thumb(text, image_url, fallback_url=None):
+    thumb = halal_thumb(image_url) or halal_thumb(fallback_url)
+    body = discord.ui.TextDisplay(text)
+    if thumb is None:
+        return [body]
+    return [discord.ui.Section(body, accessory=thumb)]
+
+
+class HalalStartButton(discord.ui.Button):
+    def __init__(self, coin_key):
+        super().__init__(
+            label="Start",
+            style=discord.ButtonStyle.success,
+            custom_id=f"halal_start_{coin_key}"
+        )
+        self.coin_key = coin_key
+
+    async def callback(self, interaction):
+        await start_halal_ticket(interaction, self.coin_key)
+
+
+class HalalPanel(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        coins = halal_coins()
+        tos = halal_md_link("Terms of Service", HALAL_TOS_URL)
+        website = halal_md_link("website", HALAL_WEBSITE_URL)
+
+        crypto_items = [
+            discord.ui.TextDisplay(f"{H2} Start Cryptocurrency Deal"),
+            discord.ui.TextDisplay(
+                "Use the selection below to start a deal using the appropriate "
+                "coin & network. Please be sure all deals abide by the "
+                f"{tos}. Refer to our {website} for a detailed overview of "
+                "service fees & supported networks."
+            ),
+            discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small)
+        ]
+        stable_items = [
+            discord.ui.TextDisplay(f"{H2} Stablecoins"),
+            discord.ui.TextDisplay(
+                "Start a deal with USDT or USDC on the network that matches "
+                "your wallet. Please be sure to select the correct network."
+            ),
+            discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small)
+        ]
+
+        first_crypto = True
+        first_stable = True
+        for coin in coins.values():
+            row = discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"{coin['emoji']}  {coin['panel']}"
+                    if coin["emoji"] else coin["panel"]
+                ),
+                accessory=HalalStartButton(coin["key"])
+            )
+            if coin["group"] == "crypto":
+                if not first_crypto:
+                    crypto_items.append(
+                        discord.ui.Separator(
+                            visible=True,
+                            spacing=discord.SeparatorSpacing.small
+                        )
+                    )
+                crypto_items.append(row)
+                first_crypto = False
+            else:
+                if not first_stable:
+                    stable_items.append(
+                        discord.ui.Separator(
+                            visible=True,
+                            spacing=discord.SeparatorSpacing.small
+                        )
+                    )
+                stable_items.append(row)
+                first_stable = False
+
+        self.add_item(
+            discord.ui.Container(*crypto_items, accent_colour=COLOR_HALAL_GREEN)
+        )
+        self.add_item(
+            discord.ui.Container(*stable_items, accent_colour=COLOR_HALAL_GREEN)
+        )
+
+
+class HalalCloseButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Close",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_close_ticket"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket):
+            await interaction.response.send_message(
+                "This ticket is no longer active.",
+                ephemeral=True
+            )
+            return
+        if (
+            not is_halal_party(interaction.user, ticket)
+            and not is_admin(interaction.user)
+        ):
+            await interaction.response.send_message(
+                "You cannot close this ticket.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.send_message("Closing ticket...", ephemeral=True)
+        await close_ticket_channel(
+            interaction.channel,
+            ticket,
+            f"Halal ticket closed by {interaction.user}"
+        )
+
+
+class HalalCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(HalalCloseButton())
+
+
+class HalalDealTypeSelect(discord.ui.Select):
+    def __init__(self, selected=None):
+        options = []
+        for key, label, _prompt, _example in HALAL_DEAL_TYPES:
+            options.append(
+                discord.SelectOption(
+                    label=label,
+                    value=key,
+                    default=(key == selected)
+                )
+            )
+        super().__init__(
+            placeholder="Select Deal Type",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id="halal_deal_type"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket):
+            await interaction.response.send_message(
+                "This ticket is no longer active.",
+                ephemeral=True
+            )
+            return
+        if int(interaction.user.id) != int(ticket.get("opener_id") or 0) and not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "Only the ticket opener can select the deal type.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("deal_type") and ticket.get("status") not in {
+            "halal_setup",
+            "halal_waiting_trader",
+            "halal_waiting_roles"
+        }:
+            await interaction.response.send_message(
+                "The deal type can no longer be changed.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") not in {
+            "halal_setup",
+            "halal_waiting_trader",
+            "halal_waiting_roles"
+        }:
+            await interaction.response.send_message(
+                "The deal type can no longer be changed.",
+                ephemeral=True
+            )
+            return
+        ticket["deal_type"] = self.values[0]
+        await save_data()
+        await interaction.response.edit_message(view=HalalDealTypeLayout(ticket))
+        await maybe_start_halal_roles(interaction.channel, ticket)
+
+
+class HalalDealTypeLayout(discord.ui.LayoutView):
+    def __init__(self, ticket=None):
+        super().__init__(timeout=None)
+        selected = ticket.get("deal_type") if ticket else None
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Deal Type"),
+                discord.ui.TextDisplay(
+                    "To best serve you, we need to know a few deal details. "
+                    "Please use the dropdown menu below to select the deal type:"
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.ActionRow(HalalDealTypeSelect(selected)),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+
+
+class HalalSelectRoleButton(discord.ui.Button):
+    def __init__(self, role, disabled=False):
+        super().__init__(
+            label="Select",
+            style=discord.ButtonStyle.success,
+            custom_id=f"halal_role_select_{role}",
+            disabled=disabled
+        )
+        self.role = role
+
+    async def callback(self, interaction):
+        await choose_halal_role(interaction, self.role)
+
+
+class HalalResetRolesButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Reset",
+            style=discord.ButtonStyle.danger,
+            custom_id="halal_role_reset"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or ticket.get("status") != "halal_role_selection":
+            await interaction.response.send_message(
+                "Role selection is no longer active.",
+                ephemeral=True
+            )
+            return
+        if not is_halal_party(interaction.user, ticket) and not is_admin(interaction.user):
+            await interaction.response.send_message(
+                "You cannot reset this selection.",
+                ephemeral=True
+            )
+            return
+        ticket["sender_id"] = None
+        ticket["receiver_id"] = None
+        ticket["role_confirmed"] = []
+        await save_data()
+        await interaction.response.edit_message(view=HalalRoleSelectionLayout(ticket))
+
+
+class HalalRoleSelectionLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        label = coin.get("label") or "Crypto"
+        sender = mention_or_none(ticket.get("sender_id"))
+        receiver = mention_or_none(ticket.get("receiver_id"))
+        sender_taken = bool(ticket.get("sender_id"))
+        receiver_taken = bool(ticket.get("receiver_id"))
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Role Selection"),
+                discord.ui.TextDisplay(
+                    "Select one of the following buttons that corresponds to your role in this deal."
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.Section(
+                    discord.ui.TextDisplay(f"Sending {label}: {sender}"),
+                    accessory=HalalSelectRoleButton("sender", disabled=sender_taken)
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.Section(
+                    discord.ui.TextDisplay(f"Receiving {label}: {receiver}"),
+                    accessory=HalalSelectRoleButton("receiver", disabled=receiver_taken)
+                ),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+        self.add_item(discord.ui.ActionRow(HalalResetRolesButton()))
+
+
+class HalalRoleConfirmButton(discord.ui.Button):
+    def __init__(self, role):
+        super().__init__(
+            label="Confirm",
+            style=discord.ButtonStyle.success,
+            custom_id=f"halal_role_confirm_{role}"
+        )
+        self.role = role
+
+    async def callback(self, interaction):
+        await confirm_halal_role(interaction, self.role)
+
+
+class HalalReturnButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Return",
+            style=discord.ButtonStyle.danger,
+            custom_id="halal_role_return"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or ticket.get("status") != "halal_role_confirmation":
+            await interaction.response.send_message(
+                "This confirmation is no longer active.",
+                ephemeral=True
+            )
+            return
+        if not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can use this.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.edit_message(view=None)
+        await send_halal_role_selection(interaction.channel, ticket)
+
+
+class HalalRoleConfirmationLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        label = coin.get("label") or "Crypto"
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Role Confirmation"),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.Section(
+                    discord.ui.TextDisplay(
+                        f"Sending {label}: <@{ticket['sender_id']}>"
+                    ),
+                    accessory=HalalRoleConfirmButton("sender")
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.Section(
+                    discord.ui.TextDisplay(
+                        f"Receiving {label}: <@{ticket['receiver_id']}>"
+                    ),
+                    accessory=HalalRoleConfirmButton("receiver")
+                ),
+                discord.ui.TextDisplay(
+                    "Selecting the wrong role will result in getting scammed!"
+                ),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+        self.add_item(discord.ui.ActionRow(HalalReturnButton()))
+
+
+class HalalCorrectButton(discord.ui.Button):
+    def __init__(self, kind):
+        super().__init__(
+            label="Correct",
+            style=discord.ButtonStyle.success,
+            custom_id=f"halal_{kind}_correct"
+        )
+        self.kind = kind
+
+    async def callback(self, interaction):
+        if self.kind == "details":
+            await confirm_halal_details(interaction, True)
+        else:
+            await confirm_halal_amount(interaction, True)
+
+
+class HalalIncorrectButton(discord.ui.Button):
+    def __init__(self, kind):
+        super().__init__(
+            label="Incorrect",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"halal_{kind}_incorrect"
+        )
+        self.kind = kind
+
+    async def callback(self, interaction):
+        if self.kind == "details":
+            await confirm_halal_details(interaction, False)
+        else:
+            await confirm_halal_amount(interaction, False)
+
+
+class HalalDetailsLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        deal = halal_deal_type(ticket)
+        label = deal[1] if deal else "Deal"
+        details = safe_code_text(ticket.get("deal_details") or "")
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Confirm Details"),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.TextDisplay(f"**Type:** {label}"),
+                discord.ui.TextDisplay(f"```{details}```"),
+                discord.ui.TextDisplay(
+                    "Review the deal type and description before confirming. "
+                    "Errors may result in getting scammed!"
+                ),
+                discord.ui.ActionRow(
+                    HalalCorrectButton("details"),
+                    HalalIncorrectButton("details")
+                ),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+
+
+class HalalAmountLayout(discord.ui.LayoutView):
+    def __init__(self, ticket, disabled=False):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Amount Confirmation"),
+                discord.ui.TextDisplay("Both users must confirm the USD deal amount"),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.TextDisplay(
+                    f"**Amount:** `{money(ticket.get('usd_amount') or '0')}`"
+                ),
+                discord.ui.ActionRow(
+                    HalalCorrectButton("amount"),
+                    HalalIncorrectButton("amount")
+                ),
+                accent_colour=COLOR_HALAL_GRAY
+            )
+        )
+
+
+class HalalCopyFieldButton(discord.ui.Button):
+    def __init__(self, field):
+        super().__init__(
+            label="Copy",
+            style=discord.ButtonStyle.secondary,
+            custom_id=f"halal_copy_{field}"
+        )
+        self.field = field
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can use this button.",
+                ephemeral=True
+            )
+            return
+        if self.field == "address":
+            value = ticket.get("deposit_address") or ""
+        else:
+            value = halal_amount_text(ticket)
+        await interaction.response.send_message(value, ephemeral=True)
+
+
+class HalalCopyDetailsButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Copy Details",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_copy_details"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can use this button.",
+                ephemeral=True
+            )
+            return
+        ticket["copied_details"] = True
+        await save_data()
+        await interaction.response.edit_message(
+            view=HalalInvoiceLayout(ticket, copied=True)
+        )
+        await interaction.followup.send(
+            f"{ticket.get('deposit_address')}\n"
+            f"{halal_amount_text(ticket)}\n"
+            "Copy the payment details above. No funds have been received yet."
+        )
+
+
+class HalalCancelDealButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Cancel deal",
+            style=discord.ButtonStyle.danger,
+            custom_id="halal_cancel_deal"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can cancel this deal.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") not in {"waiting_deposit", "halal_waiting_deposit"}:
+            await interaction.response.send_message(
+                "This deal can no longer be cancelled from here.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.send_message("Cancelling deal...", ephemeral=True)
+        await close_ticket_channel(
+            interaction.channel,
+            ticket,
+            f"Deal cancelled by {interaction.user}"
+        )
+
+
+class HalalCheckDepositButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Check deposit",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_check_deposit"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can use this button.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True)
+        before = ticket.get("status")
+        await monitor_halal_ticket(ticket)
+        current = get_ticket(interaction.channel_id)
+        if current is None:
+            return
+        if current.get("status") == before:
+            await interaction.followup.send(
+                "No funds have been received yet.",
+                ephemeral=True
+            )
+        else:
+            await interaction.followup.send(
+                "Deposit updated.",
+                ephemeral=True
+            )
+
+
+class HalalInvoiceLayout(discord.ui.LayoutView):
+    def __init__(self, ticket, copied=False):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        address = ticket.get("deposit_address") or ""
+        amount = halal_amount_text(ticket)
+        usd = money(ticket.get("usd_amount") or "0")
+        rate = ticket.get("crypto_price")
+        rate_line = ""
+        if rate and coin.get("price"):
+            rate_line = (
+                f"Exchange Rate: 1 {coin.get('short')} = "
+                f"{money(rate)} USD"
+            )
+        sender = f"<@{ticket['sender_id']}>"
+        summary_text = (
+            f"{H2} Deal Summary\n"
+            "Refer to this deal summary for any reaffirmations. "
+            "Notify staff for any support required.\n\n"
+            f"**Sender:** <@{ticket['sender_id']}>\n"
+            f"**Receiver:** <@{ticket['receiver_id']}>\n"
+            f"**Coin:** {coin.get('emoji', '')} {coin.get('label')}\n"
+            f"**Deal Amount:** `{usd}`\n"
+            f"**Deal:** {halal_deal_type(ticket)[1] if halal_deal_type(ticket) else 'Deal'}"
+            f" - {ticket.get('deal_details') or ''}"
+        )
+        invoice_header = (
+            f"{H2} Payment Invoice\n"
+            f"{sender} Send the funds as part of the deal to the Middleman "
+            "address specified below. Please copy the amount provided."
+        )
+        buttons = []
+        if not copied and not ticket.get("copied_details"):
+            buttons.append(HalalCopyDetailsButton())
+        buttons.extend([HalalCancelDealButton(), HalalCheckDepositButton()])
+        self.add_item(
+            discord.ui.Container(
+                *with_optional_thumb(summary_text, HALAL_MASCOT_IMAGE),
+                accent_colour=COLOR_HALAL_GRAY
+            )
+        )
+        self.add_item(discord.ui.TextDisplay(sender))
+        invoice_items = with_optional_thumb(
+            invoice_header,
+            qr_image_url(address)
+        )
+        invoice_items.extend([
+            discord.ui.Separator(
+                visible=True,
+                spacing=discord.SeparatorSpacing.small
+            ),
+            discord.ui.Section(
+                discord.ui.TextDisplay(f"**Address:**\n`{address}`"),
+                accessory=HalalCopyFieldButton("address")
+            ),
+            discord.ui.Section(
+                discord.ui.TextDisplay(
+                    f"**Amount:**\n`{amount}` {coin.get('short')} ({usd} USD)"
+                ),
+                accessory=HalalCopyFieldButton("amount")
+            )
+        ])
+        if rate_line:
+            invoice_items.append(discord.ui.TextDisplay(rate_line))
+        invoice_items.append(discord.ui.ActionRow(*buttons))
+        self.add_item(
+            discord.ui.Container(*invoice_items, accent_colour=COLOR_HALAL_GRAY)
+        )
+
+
+class HalalProceedReleaseButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Release",
+            style=discord.ButtonStyle.success,
+            custom_id="halal_release"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
+            await interaction.response.send_message(
+                "Only the sender can release the escrow.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") != "trade":
+            await interaction.response.send_message(
+                "The trade is not currently ready for release.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.defer()
+        await send_halal_release_confirmation(interaction.channel, ticket)
+
+
+class HalalProceedCancelButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Cancel",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_proceed_cancel"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+            await interaction.response.send_message(
+                "Only the two traders can cancel.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") != "trade":
+            await interaction.response.send_message(
+                "Cancellation is not available right now.",
+                ephemeral=True
+            )
+            return
+        ticket["status"] = "cancellation"
+        ticket["cancel_votes"] = []
+        ticket["uncancel_votes"] = []
+        await save_data()
+        await interaction.response.send_message(
+            content=f"<@{ticket['sender_id']}> <@{ticket['receiver_id']}>",
+            embed=cancellation_embed(ticket),
+            view=CancellationView(),
+            allowed_mentions=discord.AllowedMentions(
+                users=True, roles=False, everyone=False
+            )
+        )
+        message = await interaction.original_response()
+        ticket["messages"]["cancellation"] = message.id
+        await save_data()
+
+
+class HalalProceedLayout(discord.ui.LayoutView):
+    def __init__(self, ticket, released=False):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        if released:
+            body = (
+                f"{H2} You may now proceed with the deal\n"
+                f"Release has been requested by the sender (<@{ticket['sender_id']}>).\n\n"
+                f"The receiver (<@{ticket['receiver_id']}>) must provide a "
+                f"{coin.get('label')} payout address before funds can be released."
+            )
+            self.add_item(
+                discord.ui.TextDisplay(
+                    f"<@{ticket['sender_id']}> <@{ticket['receiver_id']}>"
+                )
+            )
+            self.add_item(
+                discord.ui.Container(
+                    discord.ui.TextDisplay(body),
+                    accent_colour=COLOR_HALAL_GREEN
+                )
+            )
+            return
+        body = (
+            f"{H2} You may now proceed with the deal\n"
+            f"The receiver (<@{ticket['receiver_id']}>) may now provide the goods "
+            f"to the sender (<@{ticket['sender_id']}>).\n\n"
+            "Once the deal is complete, the sender must click the **Release** "
+            "button below to release the funds to the receiver & complete the deal."
+        )
+        self.add_item(
+            discord.ui.TextDisplay(
+                f"<@{ticket['sender_id']}> <@{ticket['receiver_id']}>"
+            )
+        )
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(body),
+                discord.ui.ActionRow(
+                    HalalProceedReleaseButton(),
+                    HalalProceedCancelButton()
+                ),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+
+
+class HalalReleaseConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Confirm",
+            style=discord.ButtonStyle.success,
+            custom_id="halal_release_confirm"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
+            await interaction.response.send_message(
+                "Only the sender can confirm the release.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") != "release_confirmation":
+            await interaction.response.send_message(
+                "This release confirmation is no longer active.",
+                ephemeral=True
+            )
+            return
+        ticket["release_authorized"] = True
+        ticket["status"] = "address_prompt"
+        await save_data()
+        await interaction.response.edit_message(view=None)
+        await update_halal_proceed_released(interaction.channel, ticket)
+        await send_halal_address_prompt(interaction.channel, ticket)
+
+
+class HalalReleaseBackButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Back",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_release_back"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
+            await interaction.response.send_message(
+                "Only the sender can use this button.",
+                ephemeral=True
+            )
+            return
+        ticket["status"] = "trade"
+        await save_data()
+        await interaction.response.edit_message(view=None)
+
+
+class HalalReleaseLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        self.add_item(discord.ui.TextDisplay(f"<@{ticket['sender_id']}>"))
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Release Confirmation"),
+                discord.ui.TextDisplay(
+                    f"Are you sure you want to release the funds to <@{ticket['receiver_id']}>?\n\n"
+                    "Once confirmed, the funds will be released and the deal will be "
+                    "marked as complete. This action cannot be undone."
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.TextDisplay(
+                    "Staff will never DM you asking to release funds."
+                ),
+                discord.ui.ActionRow(
+                    HalalReleaseConfirmButton(),
+                    HalalReleaseBackButton()
+                ),
+                accent_colour=COLOR_HALAL_ORANGE
+            )
+        )
+
+
+class HalalAddressConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Confirm",
+            style=discord.ButtonStyle.success,
+            custom_id="halal_address_confirm"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_receiver(interaction, ticket):
+            await interaction.response.send_message(
+                "Only the receiver can confirm this address.",
+                ephemeral=True
+            )
+            return
+        if ticket.get("status") != "address_confirmation":
+            await interaction.response.send_message(
+                "This address confirmation is no longer active.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.edit_message(view=None)
+        await finish_halal_address_confirm(interaction.channel, ticket)
+
+
+class HalalAddressBackButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Back",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_address_back"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket) or not is_receiver(interaction, ticket):
+            await interaction.response.send_message(
+                "Only the receiver can use this button.",
+                ephemeral=True
+            )
+            return
+        ticket["receiver_address"] = None
+        ticket["status"] = "address_prompt"
+        await save_data()
+        await interaction.response.edit_message(view=None)
+        await send_halal_address_prompt(interaction.channel, ticket)
+
+
+class HalalAddressConfirmLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        self.add_item(discord.ui.TextDisplay(f"<@{ticket['receiver_id']}>"))
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(
+                    f"{H2} Is this your {coin.get('label')} address?"
+                ),
+                discord.ui.TextDisplay(
+                    "Please verify that the address you provided is correct. "
+                    "Once the funds are released, they cannot be retrieved."
+                ),
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                ),
+                discord.ui.TextDisplay(
+                    f"**Address**\n`{ticket.get('receiver_address')}`"
+                ),
+                discord.ui.ActionRow(
+                    HalalAddressConfirmButton(),
+                    HalalAddressBackButton()
+                ),
+                accent_colour=COLOR_HALAL_ORANGE
+            )
+        )
+
+
+class HalalCompleteCloseButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            label="Close",
+            style=discord.ButtonStyle.secondary,
+            custom_id="halal_complete_close"
+        )
+
+    async def callback(self, interaction):
+        ticket = get_ticket(interaction.channel_id)
+        if not is_halal_ticket(ticket):
+            await interaction.response.send_message(
+                "This ticket is no longer active.",
+                ephemeral=True
+            )
+            return
+        if (
+            not is_halal_party(interaction.user, ticket)
+            and not is_admin(interaction.user)
+        ):
+            await interaction.response.send_message(
+                "You cannot close this ticket.",
+                ephemeral=True
+            )
+            return
+        await interaction.response.defer()
+        await close_ticket_channel(
+            interaction.channel,
+            ticket,
+            f"Completed Halal ticket closed by {interaction.user}"
+        )
+
+
+class HalalCompleteLayout(discord.ui.LayoutView):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(
+            discord.ui.Container(
+                discord.ui.TextDisplay(f"{H2} Deal Complete"),
+                discord.ui.TextDisplay(
+                    "Thank you for using Halal. This deal has been successfully completed.\n\n"
+                    "If you'd like to make your vouch public, use `/setprivacy` in Halal MM.\n\n"
+                    "This ticket will automatically close in 5 minutes."
+                ),
+                discord.ui.ActionRow(HalalCompleteCloseButton()),
+                accent_colour=COLOR_HALAL_GRAY
+            )
+        )
+
+
+class HalalStatsLayout(discord.ui.LayoutView):
+    def __init__(self, user):
+        super().__init__(timeout=None)
+        data = get_user_stats(user.id)
+        text = (
+            f"{H2} {user.name}\n"
+            f"**Deals started:** {int(data.get('deals_started') or 0)}\n"
+            f"**Deals completed:** {int(data.get('deals_completed') or 0)}\n"
+            f"**Total USD Value:** {money(data.get('total_usd_value') or '0')}\n"
+            f"**Completion rate:** {completion_rate_text(data)}"
+        )
+        self.add_item(
+            discord.ui.Container(
+                *with_optional_thumb(text, str(user.display_avatar.url)),
+                accent_colour=COLOR_HALAL_GREEN
+            )
+        )
+
+
+class HalalCompletedLogLayout(discord.ui.LayoutView):
+    def __init__(self, ticket):
+        super().__init__(timeout=None)
+        coin = halal_coin(ticket)
+        amount = halal_amount_text(
+            ticket,
+            ticket.get("payout_amount") or ticket.get("deposit_amount")
+        )
+        sender_private = DATA["privacy"].get(str(ticket.get("sender_id")), True)
+        receiver_private = DATA["privacy"].get(str(ticket.get("receiver_id")), True)
+        sender_text = "`Anonymous`" if sender_private else f"<@{ticket['sender_id']}>"
+        receiver_text = "`Anonymous`" if receiver_private else f"<@{ticket['receiver_id']}>"
+        txid = ticket.get("payout_txid") or ""
+        explorer = explorer_name_for(ticket)
+        link = tx_link(txid, ticket.get("type"))
+        short = short_txid(txid)
+        items = with_optional_thumb(
+            (
+                f"{H2} {coin.get('label')} Deal Complete\n"
+                f"**Amount**\n`{amount}` {coin.get('short')} "
+                f"({money(ticket.get('usd_amount') or '0')} USD)\n"
+                f"**Sender** {sender_text}    **Receiver** {receiver_text}\n"
+                f"**Transaction**\n[{short}]({link}) (View Transaction)"
+            ),
+            HALAL_MASCOT_IMAGE
+        )
+        if txid and not is_manual_reference(txid) and not is_simulation_reference(txid):
+            items.append(
+                discord.ui.ActionRow(
+                    discord.ui.Button(
+                        label=f"View on {explorer}",
+                        style=discord.ButtonStyle.secondary,
+                        url=link
+                    )
+                )
+            )
+        self.add_item(
+            discord.ui.Container(*items, accent_colour=COLOR_HALAL_GREEN)
+        )
+
+
+def detected_layout(ticket):
+    coin = halal_coin(ticket)
+    txid = ticket.get("deposit_txid") or ""
+    amount = halal_amount_text(
+        ticket,
+        ticket.get("deposit_amount") or ticket.get("crypto_amount")
+    )
+    needed = int(coin.get("confirmations") or 1)
+    link = tx_link(txid, ticket.get("type"))
+    text = (
+        f"{H2} Transaction Detected\n"
+        "Your payment has been detected on the network.\n"
+        "Please wait while it receives the required confirmations.\n\n"
+        f"**Transaction**\n[{short_txid(txid)}]({link})\n"
+        f"**Amount Received**\n`{amount}` {coin.get('short')} ≈ "
+        f"{money(ticket.get('usd_amount') or '0')} USD\n"
+        f"**Required Confirmations**\n`{needed}`"
+    )
+    return TinyLayout(
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        accent=COLOR_HALAL_ORANGE
+    )
+
+
+def received_layout(ticket):
+    coin = halal_coin(ticket)
+    txid = ticket.get("deposit_txid") or ""
+    amount = halal_amount_text(
+        ticket,
+        ticket.get("deposit_amount") or ticket.get("crypto_amount")
+    )
+    link = tx_link(txid, ticket.get("type"))
+    text = (
+        f"{H2} Payment Received\n"
+        "The payment is now secured, and has reached the required amount of confirmations.\n\n"
+        f"**Transaction**\n[{short_txid(txid)}]({link})\n"
+        f"**Confirmations**\n`{ticket.get('deposit_confirmations') or 1}`\n"
+        f"**Amount Received**\n`{amount}` {coin.get('short')} "
+        f"({money(ticket.get('usd_amount') or '0')} USD)"
+    )
+    return TinyLayout(
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        accent=COLOR_HALAL_GREEN
+    )
+
+
+def released_layout(ticket):
+    coin = halal_coin(ticket)
+    txid = ticket.get("payout_txid") or ""
+    amount = halal_amount_text(
+        ticket,
+        ticket.get("payout_amount") or ticket.get("deposit_amount")
+    )
+    link = tx_link(txid, ticket.get("type"))
+    text = (
+        f"{H2} Payment Released\n"
+        f"The funds have been successfully released to the provided {coin.get('label')} address.\n\n"
+        f"**Amount**\n`{amount}` {coin.get('short')} ≈ "
+        f"{money(ticket.get('usd_amount') or '0')} USD\n"
+        f"**Transaction**\n[{short_txid(txid)}]({link})"
+    )
+    return TinyLayout(
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        accent=COLOR_HALAL_GREEN
+    )
+
+
+async def start_halal_ticket(interaction, coin_key):
+    coin = halal_coin(coin_key)
+    if not coin:
+        await interaction.response.send_message(
+            "That coin is not available.",
+            ephemeral=True
+        )
+        return
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Tickets can only be created inside a server.",
+            ephemeral=True
+        )
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    category = await get_halal_ticket_category(interaction.guild)
+    if category is None:
+        await interaction.followup.send(
+            "The Halal ticket category could not be found. "
+            "Set HALAL_TICKET_CATEGORY or TICKET_CATEGORY.",
+            ephemeral=True
+        )
+        return
+    number = await reserve_halal_ticket_number()
+    name = f"auto-{number}"
+    topic = f"Halal MM | auto-{number} | {secrets.token_hex(16)}"
+    opener = interaction.user
+    try:
+        channel = await interaction.guild.create_text_channel(
+            name=name,
+            category=category,
+            topic=topic,
+            overwrites=ticket_channel_overwrites(
+                interaction.guild,
+                opener,
+                None,
+                can_chat=True
+            ),
+            reason=f"Halal ticket {number}"
+        )
+    except discord.HTTPException:
+        logger.exception("Failed to create Halal ticket channel")
+        await interaction.followup.send(
+            "Discord rejected the ticket creation request.",
+            ephemeral=True
+        )
+        return
+
+    ticket = {
+        "system": "halal",
+        "number": number,
+        "guild_id": interaction.guild.id,
+        "channel_id": channel.id,
+        "type": coin_key,
+        "opener_id": opener.id,
+        "trader_id": None,
+        "deal_type": None,
+        "deal_details": None,
+        "opener_side": "",
+        "trader_side": "",
+        "sender_id": None,
+        "receiver_id": None,
+        "role_confirmed": [],
+        "usd_amount": None,
+        "usd_confirmed": [],
+        "crypto_price": None,
+        "crypto_amount": None,
+        "deposit_address": None,
+        "deposit_txid": None,
+        "deposit_amount": None,
+        "deposit_confirmations": 0,
+        "baseline_txids": [],
+        "baseline_ready": False,
+        "manual_deposit_override": False,
+        "manual_reference": None,
+        "receiver_address": None,
+        "release_authorized": False,
+        "payout_txid": None,
+        "payout_amount": None,
+        "payout_is_simulation": False,
+        "uncancel_votes": [],
+        "cancel_votes": [],
+        "copied_details": False,
+        "status": "halal_setup",
+        "created_at": int(time.time()),
+        "completed_at": None,
+        "stats_recorded": False,
+        "completed_logged": False,
+        "withdrawal_success_sent": False,
+        "completed_channel_sent": False,
+        "chat_unlocked": False,
+        "messages": {}
+    }
+    DATA["tickets"][str(channel.id)] = ticket
+    await save_data()
+
+    website = halal_md_link("website", HALAL_WEBSITE_URL)
+    welcome = TinyLayout(
+        *with_optional_thumb(
+            (
+                f"{H2} Deal Started\n"
+                "Welcome to our automated cryptocurrency Middleman system! "
+                "Your cryptocurrency will be stored securely for the duration of this deal. "
+                f"Please notify support or check our {website} for assistance."
+            ),
+            HALAL_WELCOME_IMAGE
+        ),
+        accent=COLOR_HALAL_GREEN
+    )
+    scams = halal_md_link("known scams", HALAL_KNOWN_SCAMS_URL)
+    safety = TinyLayout(
+        discord.ui.TextDisplay(f"{H2} Safety Warning"),
+        discord.ui.TextDisplay(
+            "The bot and our support team will NEVER direct message you. "
+            "Ensure all conversations related to the deal are done within this ticket. "
+            f"Review our {scams} section to stay safe."
+        ),
+        accent=COLOR_HALAL_RED
+    )
+    await channel.send(view=welcome)
+    await channel.send(view=safety)
+    await channel.send(view=HalalCloseView())
+    type_message = await channel.send(view=HalalDealTypeLayout(ticket))
+    ticket["messages"]["deal_type"] = type_message.id
+    trader_prompt = await channel.send(
+        content=f"<@{opener.id}> Paste the Discord ID or mention of the other trader.",
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["trader_prompt"] = trader_prompt.id
+    await save_data()
+    log_action(
+        "halal_ticket_created",
+        ticket=number,
+        type=coin_key,
+        channel=f"{channel.name}({channel.id})",
+        opener=f"{opener}({opener.id})"
+    )
+    await interaction.followup.send(
+        f"**Ticket Created!** -> {WORD_JOINER}{channel.mention}",
+        ephemeral=True
+    )
+
+
+async def add_halal_trader(channel, ticket, trader):
+    guild = channel.guild
+    overwrite = ticket_member_overwrite(True)
+    try:
+        await channel.set_permissions(
+            trader,
+            overwrite=overwrite,
+            reason="Halal trader added"
+        )
+    except discord.HTTPException:
+        logger.exception("Failed to add Halal trader permissions")
+    ticket["trader_id"] = trader.id
+    if not ticket.get("deal_type"):
+        ticket["status"] = "halal_waiting_trader"
+    record_deal_started(ticket)
+    await save_data()
+    await maybe_start_halal_roles(channel, ticket)
+
+
+async def maybe_start_halal_roles(channel, ticket):
+    if not ticket.get("deal_type") or not ticket.get("trader_id"):
+        return
+    if ticket.get("status") in {
+        "halal_role_selection",
+        "halal_role_confirmation",
+        "halal_details",
+        "halal_details_confirm",
+        "halal_amount",
+        "halal_amount_confirm",
+        "waiting_deposit",
+        "trade"
+    }:
+        return
+    welcome = (
+        f"<@{ticket['trader_id']}> Welcome! Select roles below."
+        if int(ticket.get("opener_id") or 0) != int(ticket.get("trader_id") or 0)
+        else "Select roles below."
+    )
+    await send_halal_role_selection(channel, ticket, ping=welcome)
+
+
+async def send_halal_role_selection(channel, ticket, ping=None):
+    ticket["status"] = "halal_role_selection"
+    ticket["sender_id"] = None
+    ticket["receiver_id"] = None
+    ticket["role_confirmed"] = []
+    await save_data()
+    kwargs = {"view": HalalRoleSelectionLayout(ticket)}
+    if ping:
+        kwargs["content"] = ping
+        kwargs["allowed_mentions"] = discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    message = await channel.send(**kwargs)
+    ticket["messages"]["role_selection"] = message.id
+    await save_data()
+
+
+async def choose_halal_role(interaction, role):
+    ticket = get_ticket(interaction.channel_id)
+    if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+        await interaction.response.send_message(
+            "Only the two traders can select roles.",
+            ephemeral=True
+        )
+        return
+    if ticket.get("status") != "halal_role_selection":
+        await interaction.response.send_message(
+            "Role selection is no longer active.",
+            ephemeral=True
+        )
+        return
+    user_id = interaction.user.id
+    if ticket.get("sender_id") == user_id or ticket.get("receiver_id") == user_id:
+        await interaction.response.send_message(
+            "You already selected a role.",
+            ephemeral=True
+        )
+        return
+    key = f"{role}_id"
+    if ticket.get(key):
+        await interaction.response.send_message(
+            "That role has already been selected.",
+            ephemeral=True
+        )
+        return
+    ticket[key] = user_id
+    complete = bool(ticket.get("sender_id") and ticket.get("receiver_id"))
+    await save_data()
+    await interaction.response.edit_message(view=HalalRoleSelectionLayout(ticket))
+    if complete:
+        ticket["status"] = "halal_role_confirmation"
+        ticket["role_confirmed"] = []
+        await save_data()
+        message = await interaction.channel.send(
+            view=HalalRoleConfirmationLayout(ticket)
+        )
+        ticket["messages"]["role_confirmation"] = message.id
+        await save_data()
+
+
+async def confirm_halal_role(interaction, role):
+    ticket = get_ticket(interaction.channel_id)
+    if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+        await interaction.response.send_message(
+            "Only the two traders can confirm the roles.",
+            ephemeral=True
+        )
+        return
+    if ticket.get("status") != "halal_role_confirmation":
+        await interaction.response.send_message(
+            "This confirmation is no longer active.",
+            ephemeral=True
+        )
+        return
+    expected = int(ticket.get(f"{role}_id") or 0)
+    if interaction.user.id != expected:
+        await interaction.response.send_message(
+            "Only the trader for that role can confirm it.",
+            ephemeral=True
+        )
+        return
+    confirmed = list(ticket.get("role_confirmed") or [])
+    if interaction.user.id in confirmed:
+        await interaction.response.send_message(
+            "You already confirmed.",
+            ephemeral=True
+        )
+        return
+    confirmed.append(interaction.user.id)
+    ticket["role_confirmed"] = confirmed
+    both = {
+        int(ticket["sender_id"]),
+        int(ticket["receiver_id"])
+    }.issubset(set(confirmed))
+    if both:
+        ticket["status"] = "halal_details"
+    await save_data()
+    await interaction.response.send_message(
+        view=halal_text_container(
+            f"{interaction.user.mention} has responded with 'Correct'",
+            COLOR_HALAL_GRAY
+        ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    if both:
+        old = await fetch_message(
+            interaction.channel,
+            ticket["messages"].get("role_confirmation")
+        )
+        if old is not None:
+            try:
+                await old.edit(view=None)
+            except discord.HTTPException:
+                pass
+        await send_halal_details_prompt(interaction.channel, ticket)
+
+
+async def send_halal_details_prompt(channel, ticket):
+    deal = halal_deal_type(ticket)
+    label = deal[1] if deal else "Deal"
+    prompt = deal[2] if deal else "Please state the deal details."
+    example = deal[3] if deal else ""
+    ticket["status"] = "halal_details"
+    ticket["deal_details"] = None
+    await save_data()
+    items = [
+        discord.ui.TextDisplay(f"{H2} Deal Details"),
+        discord.ui.TextDisplay(prompt),
+        discord.ui.TextDisplay(f"**Type:** {label}"),
+        discord.ui.Separator(
+            visible=True,
+            spacing=discord.SeparatorSpacing.small
+        )
+    ]
+    if example:
+        items.append(discord.ui.TextDisplay(f"`{example}`"))
+    view = TinyLayout(
+        *items,
+        accent=COLOR_HALAL_GREEN
+    )
+    message = await channel.send(
+        content=f"<@{ticket['sender_id']}>",
+        view=view,
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["deal_details"] = message.id
+    await save_data()
+
+
+async def send_halal_amount_prompt(channel, ticket):
+    ticket["status"] = "halal_amount"
+    ticket["usd_amount"] = None
+    ticket["usd_confirmed"] = []
+    ticket["amount_started_at"] = int(time.time())
+    await save_data()
+    view = TinyLayout(
+        discord.ui.TextDisplay(f"{H2} Deal Amount"),
+        discord.ui.TextDisplay(
+            "State the amount the bot is expected to receive in USD (eg. 100.59)"
+        ),
+        discord.ui.TextDisplay(
+            "Ticket will be closed in 30 minutes if left unattended"
+        ),
+        accent=COLOR_HALAL_GRAY
+    )
+    message = await channel.send(
+        content=f"<@{ticket['sender_id']}>",
+        view=view,
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["deal_amount"] = message.id
+    await save_data()
+    ensure_monitor(ticket)
+
+
+async def confirm_halal_details(interaction, correct):
+    ticket = get_ticket(interaction.channel_id)
+    if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+        await interaction.response.send_message(
+            "Only the two traders can confirm the details.",
+            ephemeral=True
+        )
+        return
+    if ticket.get("status") != "halal_details_confirm":
+        await interaction.response.send_message(
+            "This confirmation is no longer active.",
+            ephemeral=True
+        )
+        return
+    if int(interaction.user.id) == int(ticket.get("sender_id") or 0) and not is_admin(interaction.user):
+        await interaction.response.send_message(
+            "The other trader must confirm these details.",
+            ephemeral=True
+        )
+        return
+    if not correct:
+        await interaction.response.edit_message(view=None)
+        await send_halal_details_prompt(interaction.channel, ticket)
+        return
+    await interaction.response.edit_message(view=None)
+    await send_halal_amount_prompt(interaction.channel, ticket)
+
+
+async def confirm_halal_amount(interaction, correct):
+    ticket = get_ticket(interaction.channel_id)
+    if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
+        await interaction.response.send_message(
+            "Only the two traders can confirm the amount.",
+            ephemeral=True
+        )
+        return
+    if ticket.get("status") != "halal_amount_confirm":
+        await interaction.response.send_message(
+            "This confirmation is no longer active.",
+            ephemeral=True
+        )
+        return
+    if not correct:
+        ticket["usd_amount"] = None
+        ticket["usd_confirmed"] = []
+        await save_data()
+        await interaction.response.edit_message(view=None)
+        await send_halal_amount_prompt(interaction.channel, ticket)
+        return
+    confirmed = list(ticket.get("usd_confirmed") or [])
+    if interaction.user.id in confirmed:
+        await interaction.response.send_message(
+            "You already confirmed the USD amount.",
+            ephemeral=True
+        )
+        return
+    confirmed.append(interaction.user.id)
+    ticket["usd_confirmed"] = confirmed
+    both = {
+        int(ticket["sender_id"]),
+        int(ticket["receiver_id"])
+    }.issubset(set(confirmed))
+    await save_data()
+    await interaction.response.send_message(
+        view=halal_text_container(
+            f"{interaction.user.mention} has responded with 'Correct'",
+            COLOR_HALAL_GRAY
+        ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    if both:
+        old = await fetch_message(
+            interaction.channel,
+            ticket["messages"].get("amount_confirm")
+        )
+        if old is not None:
+            try:
+                await old.edit(view=None)
+            except discord.HTTPException:
+                pass
+        await send_halal_payment(interaction.channel, ticket)
+
+
+def valid_crypto_address(coin, address):
+    address = str(address or "").strip()
+    family = coin.get("family")
+    if family == "utxo":
+        if coin.get("key") == "ltc":
+            return bool(re.fullmatch(r"(ltc1|[LM3])[a-zA-HJ-NP-Z0-9]{25,62}", address))
+        return bool(re.fullmatch(r"(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}", address))
+    if family in {"eth", "erc20", "bep20"}:
+        return bool(re.fullmatch(r"0x[a-fA-F0-9]{40}", address))
+    if family in {"sol", "spl"}:
+        return bool(re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", address))
+    return len(address) >= 20
+
+
+async def handle_halal_chat(message, ticket):
+    content = (message.content or "").strip()
+    status = ticket.get("status")
+    staff = is_staff_command_user(message.author) or is_admin(message.author)
+    if staff and content.startswith("!"):
+        return False
+
+    unlocked = bool(ticket.get("chat_unlocked")) or status in {
+        "waiting_deposit",
+        "deposit_unconfirmed",
+        "waiting_release",
+        "release_confirmation",
+        "address_prompt",
+        "address_confirmation",
+        "sending_crypto",
+        "settlement_pending",
+        "completed"
+    }
+
+    async def reject():
+        if staff:
+            return False
+        try:
+            await message.delete()
+        except discord.HTTPException:
+            pass
+        return True
+
+    if status in {"halal_setup", "halal_waiting_trader"} and not ticket.get("trader_id"):
+        if int(message.author.id) != int(ticket.get("opener_id") or 0):
+            return await reject()
+        if not content:
+            return await reject()
+        trader = await resolve_trader(message.guild, content)
+        if trader is None:
+            await message.channel.send(
+                "I could not find that user. Paste their ID, mention, or username."
+            )
+            return True
+        if trader.bot or trader.id == message.author.id:
+            await message.channel.send("Paste your trader's Discord ID or mention.")
+            return True
+        await add_halal_trader(message.channel, ticket, trader)
+        return True
+
+    if status == "halal_details":
+        if int(message.author.id) != int(ticket.get("sender_id") or 0):
+            return await reject()
+        if not content:
+            return await reject()
+        ticket["deal_details"] = content[:1000]
+        ticket["status"] = "halal_details_confirm"
+        await save_data()
+        other = ticket.get("receiver_id")
+        confirm = await message.channel.send(
+            content=f"<@{other}>",
+            view=HalalDetailsLayout(ticket),
+            allowed_mentions=discord.AllowedMentions(
+                users=True, roles=False, everyone=False
+            )
+        )
+        ticket["messages"]["details_confirm"] = confirm.id
+        await save_data()
+        return True
+
+    if status == "halal_amount":
+        if int(message.author.id) != int(ticket.get("sender_id") or 0):
+            return await reject()
+        if not content:
+            return await reject()
+        amount = parse_positive_decimal(content)
+        if amount is None:
+            await message.channel.send("Enter a valid USD amount.")
+            return True
+        amount = amount.quantize(Decimal("0.01"))
+        if amount < halal_min_usd():
+            await message.channel.send(
+                view=halal_text_container(
+                    f"{money(halal_min_usd())} USD Minimum",
+                    COLOR_HALAL_RED
+                )
+            )
+            return True
+        ticket["usd_amount"] = str(amount)
+        ticket["usd_confirmed"] = []
+        ticket["status"] = "halal_amount_confirm"
+        await save_data()
+        confirm = await message.channel.send(view=HalalAmountLayout(ticket))
+        ticket["messages"]["amount_confirm"] = confirm.id
+        await save_data()
+        return True
+
+    if status == "address_prompt":
+        if int(message.author.id) != int(ticket.get("receiver_id") or 0):
+            return await reject()
+        if not content:
+            return await reject()
+        coin = halal_coin(ticket)
+        address = content.split()[0]
+        if not valid_crypto_address(coin, address):
+            await message.channel.send(
+                f"That does not look like a valid {coin.get('label')} address."
+            )
+            return True
+        ticket["receiver_address"] = address
+        ticket["status"] = "address_confirmation"
+        await save_data()
+        message_sent = await message.channel.send(
+            view=HalalAddressConfirmLayout(ticket),
+            allowed_mentions=discord.AllowedMentions(
+                users=True, roles=False, everyone=False
+            )
+        )
+        ticket["messages"]["address_confirmation"] = message_sent.id
+        await save_data()
+        return True
+
+    if not unlocked:
+        return await reject()
+
+    if not is_halal_party(message.author, ticket) and not staff:
+        return await reject()
+
+    return False
+
+
+async def send_halal_payment(channel, ticket):
+    coin = halal_coin(ticket)
+    address = coin.get("address") or ""
+    if not address:
+        await channel.send(
+            "A deposit address has not been set for this coin. "
+            "Fill the HALAL_*_ADDRESS values in the bot file."
+        )
+        ticket["status"] = "halal_amount_confirm"
+        ticket["usd_confirmed"] = []
+        await save_data()
+        return
+    usd = Decimal(str(ticket.get("usd_amount") or "0"))
+    if coin.get("price"):
+        price = await get_coinbase_spot(coin["price"])
+        if price is None:
+            await channel.send(
+                "Unable to retrieve the current price. Please confirm the USD amount again."
+            )
+            ticket["status"] = "halal_amount_confirm"
+            ticket["usd_confirmed"] = []
+            await save_data()
+            await channel.send(view=HalalAmountLayout(ticket))
+            return
+        decimals = int(coin.get("display_decimals") or coin.get("decimals") or 8)
+        crypto_amount = (usd / price).quantize(
+            Decimal(10) ** -decimals,
+            rounding=ROUND_DOWN
+        )
+    else:
+        price = Decimal("1.00")
+        decimals = int(coin.get("display_decimals") or 4)
+        crypto_amount = usd.quantize(
+            Decimal(10) ** -decimals,
+            rounding=ROUND_DOWN
+        )
+    ticket["crypto_price"] = str(price)
+    ticket["crypto_amount"] = str(crypto_amount)
+    ticket["deposit_address"] = address
+    ticket["deposit_txid"] = None
+    ticket["deposit_amount"] = None
+    ticket["deposit_confirmations"] = 0
+    ticket["manual_deposit_override"] = False
+    ticket["manual_reference"] = None
+    ticket["baseline_ready"] = False
+    ticket["copied_details"] = False
+    ticket["status"] = "waiting_deposit"
+    ticket["payment_started_at"] = int(time.time())
+    ticket["chat_unlocked"] = True
+    await save_data()
+    start_baseline(ticket)
+    message = await channel.send(
+        content=f"<@{ticket['sender_id']}> <@{ticket['receiver_id']}>",
+        view=HalalInvoiceLayout(ticket),
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["payment_info"] = message.id
+    waiting = await channel.send(
+        view=halal_text_container("Awaiting transaction...", COLOR_HALAL_GREEN)
+    )
+    ticket["messages"]["awaiting"] = waiting.id
+    await save_data()
+    ensure_monitor(ticket)
+
+
+async def update_awaiting(channel, ticket, text):
+    message = await fetch_message(channel, ticket.get("messages", {}).get("awaiting"))
+    if message is None:
+        return
+    try:
+        await message.edit(view=halal_text_container(text, COLOR_HALAL_GREEN))
+    except discord.HTTPException:
+        pass
+
+
+async def send_halal_release_confirmation(channel, ticket):
+    ticket["status"] = "release_confirmation"
+    await save_data()
+    message = await channel.send(view=HalalReleaseLayout(ticket))
+    ticket["messages"]["release_confirmation"] = message.id
+    await save_data()
+
+
+async def update_halal_proceed_released(channel, ticket):
+    old = await fetch_message(channel, ticket.get("messages", {}).get("proceed"))
+    if old is None:
+        return
+    try:
+        await old.edit(view=HalalProceedLayout(ticket, released=True))
+    except discord.HTTPException:
+        pass
+
+
+async def send_halal_address_prompt(channel, ticket):
+    coin = halal_coin(ticket)
+    ticket["status"] = "address_prompt"
+    await save_data()
+    view = TinyLayout(
+        discord.ui.TextDisplay(
+            f"{H2} Provide your {coin.get('label')} address"
+        ),
+        discord.ui.TextDisplay(
+            f"The deal is now complete! Paste your {coin.get('label')} address "
+            "below to initiate the release from the Middleman wallet."
+        ),
+        accent=COLOR_HALAL_GRAY
+    )
+    message = await channel.send(
+        content=f"<@{ticket['receiver_id']}>",
+        view=view,
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["address_prompt"] = message.id
+    await save_data()
+
+
+async def finish_halal_address_confirm(channel, ticket):
+    ticket["status"] = "settlement_pending"
+    await save_data()
+    if SETTLEMENT_MODE.lower() == "simulation":
+        fake = f"SIMULATION-{secrets.token_hex(24).upper()}"
+        await finalize_withdrawal(
+            ticket,
+            fake,
+            ticket.get("deposit_amount") or ticket.get("crypto_amount"),
+            simulation=True
+        )
+        return
+    await channel.send(
+        view=halal_text_container(
+            "Settlement is pending. Staff will release the funds shortly.",
+            COLOR_HALAL_ORANGE
+        )
+    )
+    await send_settlement_request(ticket)
+
+
+async def send_halal_completion(ticket):
+    channel = await resolve_ticket_channel(ticket)
+    if channel is not None and not ticket.get("withdrawal_success_sent"):
+        await channel.send(
+            content=f"<@{ticket['sender_id']}> <@{ticket['receiver_id']}>",
+            view=released_layout(ticket),
+            allowed_mentions=discord.AllowedMentions(
+                users=True, roles=False, everyone=False
+            )
+        )
+        complete = await channel.send(view=HalalCompleteLayout())
+        ticket["messages"]["withdrawal_success"] = complete.id
+        ticket["withdrawal_success_sent"] = True
+        await save_data()
+        ensure_halal_auto_close(ticket)
+    if not ticket.get("completed_channel_sent"):
+        guild = bot.get_guild(int(ticket["guild_id"]))
+        dest_id = int(HALAL_COMPLETED_CHANNEL or 0) or COMPLETED_TRANSACTION_CHANNEL
+        completed_channel = await get_configured_channel(guild, dest_id)
+        if completed_channel is not None:
+            try:
+                await completed_channel.send(view=HalalCompletedLogLayout(ticket))
+                ticket["completed_channel_sent"] = True
+                await save_data()
+            except discord.HTTPException:
+                logger.exception(
+                    "Failed to send Halal completed log for ticket %s",
+                    ticket.get("number")
+                )
+
+
+def ensure_halal_auto_close(ticket):
+    key = str(ticket.get("channel_id"))
+    existing = HALAL_CLOSE_TASKS.get(key)
+    if existing is not None and not existing.done():
+        return
+    HALAL_CLOSE_TASKS[key] = asyncio.create_task(halal_auto_close(ticket))
+
+
+async def halal_auto_close(ticket):
+    key = str(ticket.get("channel_id"))
+    try:
+        await asyncio.sleep(max(5, int(HALAL_AUTO_CLOSE_SECONDS)))
+        current = get_ticket(ticket.get("channel_id"))
+        if current is None or current.get("status") != "completed":
+            return
+        channel = await resolve_ticket_channel(current)
+        if channel is None:
+            return
+        await close_ticket_channel(
+            channel,
+            current,
+            "Halal ticket auto-closed after completion"
+        )
+    except asyncio.CancelledError:
+        return
+    finally:
+        HALAL_CLOSE_TASKS.pop(key, None)
+
+
+async def handle_halal_deposit_detected(ticket, txid, amount, confirmations):
+    if txid and not await claim_deposit_txid(ticket, txid):
+        return
+    channel_id = int(ticket["channel_id"])
+    should_send = False
+    should_confirm = False
+    async with get_ticket_lock(channel_id):
+        current = get_ticket(channel_id)
+        if current is None or current.get("status") not in {
+            "waiting_deposit",
+            "deposit_unconfirmed"
+        }:
+            return
+        previous = current.get("deposit_txid")
+        if txid:
+            current["deposit_txid"] = txid
+        current["deposit_amount"] = str(amount)
+        current["deposit_confirmations"] = int(confirmations)
+        current["manual_deposit_override"] = bool(current.get("manual_deposit_override"))
+        if txid and (
+            not previous or normalize_txid(previous) != normalize_txid(txid)
+        ):
+            should_send = True
+        current["status"] = "deposit_unconfirmed"
+        coin = halal_coin(current)
+        needed = int(coin.get("confirmations") or 1)
+        should_confirm = (
+            Decimal(str(amount)) >= required_crypto_decimal(current)
+            and int(confirmations) >= needed
+        )
+        await save_data()
+    channel = await resolve_ticket_channel(ticket)
+    if channel is None:
+        return
+    if should_send:
+        await update_awaiting(channel, ticket, "Awaiting confirmation...")
+        message = await channel.send(view=detected_layout(ticket))
+        ticket["messages"]["deposit_detected"] = message.id
+        await save_data()
+    if should_confirm:
+        await handle_halal_deposit_confirmed(ticket)
+
+
+async def handle_halal_deposit_confirmed(ticket):
+    channel_id = int(ticket["channel_id"])
+    async with get_ticket_lock(channel_id):
+        current = get_ticket(channel_id)
+        if current is None:
+            return
+        if current.get("status") in {
+            "deposit_confirmed",
+            "trade",
+            "cancellation",
+            "release_confirmation",
+            "address_prompt",
+            "address_confirmation",
+            "settlement_pending",
+            "completed"
+        }:
+            return
+        coin = halal_coin(current)
+        needed = int(coin.get("confirmations") or 1)
+        received = Decimal(str(current.get("deposit_amount") or "0"))
+        if received < required_crypto_decimal(current):
+            return
+        if int(current.get("deposit_confirmations") or 0) < needed:
+            return
+        current["status"] = "deposit_confirmed"
+        await save_data()
+    channel = await resolve_ticket_channel(ticket)
+    if channel is None:
+        return
+    await channel.send(view=received_layout(ticket))
+    proceed = await channel.send(
+        view=HalalProceedLayout(ticket),
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    ticket["messages"]["proceed"] = proceed.id
+    ticket["status"] = "trade"
+    await save_data()
+
+
+async def fetch_blockcypher_address(chain, address):
+    url = f"https://api.blockcypher.com/v1/{chain}/main/addrs/{address}"
+    token = ticket_blockcypher_token()
+    params = {"limit": 50}
+    if token:
+        params["token"] = token
+
+    async def load():
+        return await http_get_json(
+            url,
+            params=params,
+            timeout=20,
+            wait_on_rate_limit=True
+        )
+
+    return await cached_ticket_chain_get(
+        f"{chain}:addr:{address}:{token}",
+        load,
+        ttl=12
+    )
+
+
+async def fetch_blockcypher_tx(chain, txid):
+    token = ticket_blockcypher_token()
+
+    async def load():
+        url = f"https://api.blockcypher.com/v1/{chain}/main/txs/{txid}"
+        params = {}
+        if token:
+            params["token"] = token
+        return await http_get_json(
+            url,
+            params=params,
+            wait_on_rate_limit=True
+        )
+
+    return await cached_ticket_chain_get(
+        f"{chain}:tx:{txid}:{token}",
+        load,
+        ttl=12
+    )
+
+
+def utxo_received(tx, address):
+    total = 0
+    for output in tx.get("outputs") or []:
+        addresses = output.get("addresses") or []
+        if address in addresses:
+            total += int(output.get("value") or 0)
+    return total
+
+
+async def fetch_etherscan_list(action, address, chain_id, contract=None):
+    api_key = ticket_etherscan_key()
+    if not api_key:
+        return None
+    params = {
+        "chainid": str(chain_id),
+        "module": "account",
+        "action": action,
+        "address": address,
+        "page": 1,
+        "offset": 100,
+        "sort": "desc",
+        "apikey": api_key
+    }
+    if contract:
+        params["contractaddress"] = contract
+    data = await http_get_json(
+        "https://api.etherscan.io/v2/api",
+        params=params,
+        wait_on_rate_limit=True
+    )
+    if data is None:
+        return None
+    status = str(data.get("status") or "")
+    message = str(data.get("message") or "").lower()
+    result = data.get("result")
+    if status == "0" and "no transactions" in message:
+        return []
+    if status != "1":
+        return None
+    return result if isinstance(result, list) else None
+
+
+async def solana_rpc(method, params):
+    data = await http_post_json(
+        cleaned_secret(HALAL_SOLANA_RPC) or "https://api.mainnet-beta.solana.com",
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    )
+    if not isinstance(data, dict):
+        return None
+    return data.get("result")
+
+
+async def create_halal_baseline_once(ticket):
+    coin = halal_coin(ticket)
+    address = ticket.get("deposit_address")
+    started = payment_started_unix(ticket)
+    family = coin.get("family")
+    if not address:
+        ticket["baseline_txids"] = []
+        return True
+    if family == "utxo":
+        data = await fetch_blockcypher_address(coin.get("chain"), address)
+        if not isinstance(data, dict):
+            return False
+        baseline = []
+        for item in data.get("txrefs") or []:
+            txid = item.get("tx_hash") or item.get("hash")
+            if not txid:
+                continue
+            if started:
+                timestamp = parse_chain_timestamp(
+                    item.get("confirmed") or item.get("received")
+                )
+                if not timestamp or timestamp >= started:
+                    continue
+            baseline.append(normalize_txid(txid))
+        ticket["baseline_txids"] = baseline
+        return True
+    if family in {"eth", "erc20", "bep20"}:
+        action = "txlist" if family == "eth" else "tokentx"
+        transfers = await fetch_etherscan_list(
+            action,
+            address,
+            coin.get("chain_id"),
+            coin.get("contract")
+        )
+        if transfers is None:
+            return False
+        baseline = []
+        for item in transfers:
+            txid = item.get("hash")
+            if not txid:
+                continue
+            if started:
+                timestamp = parse_chain_timestamp(item.get("timeStamp"))
+                if timestamp >= started:
+                    continue
+            baseline.append(normalize_txid(txid))
+        ticket["baseline_txids"] = baseline
+        return True
+    if family in {"sol", "spl"}:
+        sigs = await solana_rpc(
+            "getSignaturesForAddress",
+            [address, {"limit": 25}]
+        )
+        if not isinstance(sigs, list):
+            return False
+        baseline = []
+        for item in sigs:
+            txid = item.get("signature")
+            if not txid:
+                continue
+            if started:
+                timestamp = parse_chain_timestamp(item.get("blockTime"))
+                if timestamp >= started:
+                    continue
+            baseline.append(normalize_txid(txid))
+        ticket["baseline_txids"] = baseline
+        return True
+    ticket["baseline_txids"] = []
+    return True
+
+
+def expected_base_units(ticket):
+    coin = halal_coin(ticket)
+    decimals = int(coin.get("decimals") or 8)
+    amount = required_crypto_decimal(ticket)
+    return int(
+        (amount * (Decimal(10) ** decimals)).to_integral_value(rounding=ROUND_DOWN)
+    )
+
+
+async def monitor_halal_ticket(ticket):
+    coin = halal_coin(ticket)
+    address = ticket.get("deposit_address")
+    if not address:
+        return
+    family = coin.get("family")
+    expected = expected_base_units(ticket)
+    baseline = set(ticket.get("baseline_txids") or [])
+    current_txid = ticket.get("deposit_txid")
+    if ticket.get("manual_deposit_override"):
+        current_txid = None
+
+    if family == "utxo":
+        chain = coin.get("chain")
+        if current_txid:
+            tx = await fetch_blockcypher_tx(chain, current_txid)
+            if not isinstance(tx, dict):
+                return
+            received = utxo_received(tx, address)
+            if received < expected:
+                return
+            amount = Decimal(received) / (Decimal(10) ** int(coin["decimals"]))
+            await handle_halal_deposit_detected(
+                ticket,
+                current_txid,
+                amount,
+                int(tx.get("confirmations") or 0)
+            )
+            return
+        data = await fetch_blockcypher_address(chain, address)
+        if not isinstance(data, dict):
+            return
+        hashes = []
+        for key in ("unconfirmed_txrefs", "txrefs"):
+            for item in data.get(key) or []:
+                txid = item.get("tx_hash") or item.get("hash")
+                if txid:
+                    hashes.append(txid)
+        for txid in hashes:
+            normalized = normalize_txid(txid)
+            if normalized in baseline:
+                continue
+            claimed = DATA["claimed_deposit_txids"].get(normalized)
+            if claimed is not None and int(claimed) != int(ticket["number"]):
+                continue
+            tx = await fetch_blockcypher_tx(chain, txid)
+            if not isinstance(tx, dict):
+                continue
+            if chain_event_is_before_payment(
+                ticket,
+                tx.get("confirmed"),
+                tx.get("received")
+            ):
+                continue
+            received = utxo_received(tx, address)
+            if received != expected:
+                continue
+            amount = Decimal(received) / (Decimal(10) ** int(coin["decimals"]))
+            await handle_halal_deposit_detected(
+                ticket,
+                txid,
+                amount,
+                int(tx.get("confirmations") or 0)
+            )
+            return
+        return
+
+    if family in {"eth", "erc20", "bep20"}:
+        action = "txlist" if family == "eth" else "tokentx"
+        transfers = await fetch_etherscan_list(
+            action,
+            address,
+            coin.get("chain_id"),
+            coin.get("contract")
+        )
+        if transfers is None:
+            return
+        for item in transfers:
+            txid = item.get("hash")
+            if not txid:
+                continue
+            if str(item.get("to") or "").lower() != address.lower():
+                continue
+            if family != "eth":
+                if str(item.get("contractAddress") or "").lower() != str(coin.get("contract") or "").lower():
+                    continue
+            if family == "eth" and int(item.get("isError") or 0) != 0:
+                continue
+            normalized = normalize_txid(txid)
+            if current_txid and normalized != normalize_txid(current_txid):
+                continue
+            if not current_txid:
+                if normalized in baseline:
+                    continue
+                claimed = DATA["claimed_deposit_txids"].get(normalized)
+                if claimed is not None and int(claimed) != int(ticket["number"]):
+                    continue
+                if chain_event_is_before_payment(ticket, item.get("timeStamp")):
+                    continue
+            value = Decimal(str(item.get("value") or "0"))
+            if int(value) != expected:
+                continue
+            amount = value / (Decimal(10) ** int(coin["decimals"]))
+            await handle_halal_deposit_detected(
+                ticket,
+                txid,
+                amount,
+                int(item.get("confirmations") or 0)
+            )
+            return
+        return
+
+    if family in {"sol", "spl"}:
+        sigs = await solana_rpc(
+            "getSignaturesForAddress",
+            [address, {"limit": 20}]
+        )
+        if not isinstance(sigs, list):
+            return
+        for item in sigs:
+            txid = item.get("signature")
+            if not txid:
+                continue
+            normalized = normalize_txid(txid)
+            if current_txid and normalized != normalize_txid(current_txid):
+                continue
+            if not current_txid:
+                if normalized in baseline:
+                    continue
+                claimed = DATA["claimed_deposit_txids"].get(normalized)
+                if claimed is not None and int(claimed) != int(ticket["number"]):
+                    continue
+                if chain_event_is_before_payment(ticket, item.get("blockTime")):
+                    continue
+            tx = await solana_rpc(
+                "getTransaction",
+                [txid, {"encoding": "jsonParsed", "maxSupportedTransactionVersion": 0}]
+            )
+            if not isinstance(tx, dict):
+                continue
+            received = solana_received(tx, address, coin)
+            if received != expected:
+                continue
+            amount = Decimal(received) / (Decimal(10) ** int(coin["decimals"]))
+            slot_meta = tx.get("meta") or {}
+            confirmations = 1 if item.get("confirmationStatus") == "finalized" else 0
+            if slot_meta.get("err"):
+                continue
+            await handle_halal_deposit_detected(
+                ticket,
+                txid,
+                amount,
+                confirmations
+            )
+            return
+
+
+def solana_received(tx, address, coin):
+    message = ((tx.get("transaction") or {}).get("message") or {})
+    instructions = message.get("instructions") or []
+    total = 0
+    family = coin.get("family")
+    mint = str(coin.get("mint") or "")
+    for ins in instructions:
+        parsed = ins.get("parsed") if isinstance(ins, dict) else None
+        if not isinstance(parsed, dict):
+            continue
+        info = parsed.get("info") or {}
+        kind = parsed.get("type")
+        if family == "sol" and kind == "transfer":
+            if str(info.get("destination") or "") == address:
+                total += int(info.get("lamports") or 0)
+        if family == "spl" and kind in {"transfer", "transferChecked"}:
+            dest = str(
+                info.get("destination")
+                or (info.get("tokenAmount") and "")
+                or ""
+            )
+            token_mint = str(info.get("mint") or "")
+            if mint and token_mint and token_mint != mint:
+                continue
+            amount = info.get("tokenAmount", {}).get("amount") if isinstance(info.get("tokenAmount"), dict) else info.get("amount")
+            account = str(info.get("destination") or "")
+            if account == address or str(info.get("authority") or "") == address:
+                try:
+                    total += int(amount or 0)
+                except (TypeError, ValueError):
+                    pass
+    if family == "spl" and total == 0:
+        meta = tx.get("meta") or {}
+        post = meta.get("postTokenBalances") or []
+        pre = {
+            (item.get("accountIndex"), item.get("mint")): item
+            for item in meta.get("preTokenBalances") or []
+        }
+        for item in post:
+            if str(item.get("mint") or "") != mint:
+                continue
+            owner = str((item.get("owner") or item.get("owner")) or "")
+            if owner != address:
+                continue
+            post_amount = Decimal(str(((item.get("uiTokenAmount") or {}).get("amount") or "0")))
+            before = pre.get((item.get("accountIndex"), item.get("mint"))) or {}
+            pre_amount = Decimal(str(((before.get("uiTokenAmount") or {}).get("amount") or "0")))
+            delta = int(post_amount - pre_amount)
+            if delta > 0:
+                total += delta
+    return total
+
+
+class HalalPanelPersistentView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        for key in (
+            "btc",
+            "eth",
+            "ltc",
+            "sol",
+            "usdt_erc20",
+            "usdc_erc20",
+            "usdt_bep20",
+            "usdt_sol",
+            "usdc_sol"
+        ):
+            self.add_item(HalalStartButton(key))
+
+
+class HalalFlowPersistentView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(HalalDealTypeSelect())
+        self.add_item(HalalSelectRoleButton("sender"))
+        self.add_item(HalalSelectRoleButton("receiver"))
+        self.add_item(HalalResetRolesButton())
+        self.add_item(HalalRoleConfirmButton("sender"))
+        self.add_item(HalalRoleConfirmButton("receiver"))
+        self.add_item(HalalReturnButton())
+        self.add_item(HalalCorrectButton("details"))
+        self.add_item(HalalIncorrectButton("details"))
+        self.add_item(HalalCorrectButton("amount"))
+        self.add_item(HalalIncorrectButton("amount"))
+        self.add_item(HalalCloseButton())
+
+
+class HalalPayPersistentView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+        self.add_item(HalalCopyFieldButton("address"))
+        self.add_item(HalalCopyFieldButton("amount"))
+        self.add_item(HalalCopyDetailsButton())
+        self.add_item(HalalCancelDealButton())
+        self.add_item(HalalCheckDepositButton())
+        self.add_item(HalalProceedReleaseButton())
+        self.add_item(HalalProceedCancelButton())
+        self.add_item(HalalReleaseConfirmButton())
+        self.add_item(HalalReleaseBackButton())
+        self.add_item(HalalAddressConfirmButton())
+        self.add_item(HalalAddressBackButton())
+        self.add_item(HalalCompleteCloseButton())
+
+
 def default_jaces_guild_state():
     return {
         "active": False,
+        "mode": "normal",
         "show_channel_ids": [],
-        "normal_channel_ids": []
+        "normal_channel_ids": [],
+        "halal_channel_ids": []
     }
 
 
@@ -9345,6 +12325,19 @@ def jaces_normal_ids(state):
         state.get("normal_channel_ids", []),
         state.get("hider_channel_ids", [])
     )
+
+
+def jaces_halal_ids(state):
+    return unique_snowflakes(
+        state.get("halal_channel_ids", [])
+    )
+
+
+def guild_mode(state):
+    mode = str(state.get("mode") or "")
+    if mode in {"jaces", "normal", "halal"}:
+        return mode
+    return "jaces" if state.get("active") else "normal"
 
 
 def ticket_channel_id_set():
@@ -9547,13 +12540,21 @@ async def apply_profile_presence(profile):
 
 def mark_channel_list(state, list_key, other_key, channel_id):
     current = unique_snowflakes(state.get(list_key, []), [channel_id])
-    other = [
-        value
-        for value in unique_snowflakes(state.get(other_key, []))
-        if value != int(channel_id)
-    ]
     state[list_key] = store_id_list(current)
-    state[other_key] = store_id_list(other)
+    others = [other_key] if isinstance(other_key, str) else list(other_key or [])
+    for extra in ("show_channel_ids", "normal_channel_ids", "halal_channel_ids"):
+        if extra != list_key and extra not in others:
+            others.append(extra)
+    for key in others:
+        if not key or key == list_key:
+            continue
+        state[key] = store_id_list(
+            [
+                value
+                for value in unique_snowflakes(state.get(key, []))
+                if value != int(channel_id)
+            ]
+        )
 
 
 async def read_asset_bytes(source):
@@ -9979,15 +12980,56 @@ def summarize_visibility(channel_results):
     return results
 
 
-async def execute_jaces_mode(guild):
+async def execute_guild_mode(guild, mode):
     state = jaces_guild_state(guild.id)
     ticket_ids = ticket_channel_id_set()
-    show_ids = jaces_show_ids(state)
-    hide_ids = [
-        channel_id
-        for channel_id in jaces_normal_ids(state)
-        if channel_id not in show_ids
-    ]
+    jaces_ids = jaces_show_ids(state)
+    normal_ids = jaces_normal_ids(state)
+    halal_ids = jaces_halal_ids(state)
+
+    if mode == "jaces":
+        show_ids = jaces_ids
+        hide_ids = [
+            channel_id
+            for channel_id in unique_snowflakes(normal_ids, halal_ids)
+            if channel_id not in show_ids
+        ]
+        branding = "JACES"
+        reason = JACES_REASON_ON
+        title = "Jaces mode on"
+        colour = COLOR_SUCCESS
+        shown_label = "!savejaces"
+        hidden_label = "!savenormall / !savehalal"
+        active = True
+    elif mode == "halal":
+        show_ids = halal_ids
+        hide_ids = [
+            channel_id
+            for channel_id in unique_snowflakes(jaces_ids, normal_ids)
+            if channel_id not in show_ids
+        ]
+        branding = "HALAL"
+        reason = JACES_REASON_HALAL
+        title = "Halal mode on"
+        colour = COLOR_HALAL_GREEN
+        shown_label = "!savehalal"
+        hidden_label = "!savejaces / !savenormall"
+        active = False
+    else:
+        mode = "normal"
+        show_ids = normal_ids
+        hide_ids = [
+            channel_id
+            for channel_id in unique_snowflakes(jaces_ids, halal_ids)
+            if channel_id not in show_ids
+        ]
+        branding = "NORMAL"
+        reason = JACES_REASON_OFF
+        title = "Jaces mode off"
+        colour = COLOR_NEUTRAL
+        shown_label = "!savenormall"
+        hidden_label = "!savejaces / !savehalal"
+        active = False
 
     jobs = []
     jobs.extend(
@@ -9995,7 +13037,7 @@ async def execute_jaces_mode(guild):
             guild,
             channel_id,
             True,
-            JACES_REASON_ON,
+            reason,
             ticket_ids
         )
         for channel_id in show_ids
@@ -10005,7 +13047,7 @@ async def execute_jaces_mode(guild):
             guild,
             channel_id,
             False,
-            JACES_REASON_ON,
+            reason,
             ticket_ids
         )
         for channel_id in hide_ids
@@ -10015,8 +13057,8 @@ async def execute_jaces_mode(guild):
     branding_task = asyncio.create_task(
         apply_branding_profile(
             guild,
-            config_branding("JACES"),
-            JACES_REASON_ON
+            config_branding(branding),
+            reason
         )
     )
 
@@ -10026,12 +13068,13 @@ async def execute_jaces_mode(guild):
     )
 
     results = summarize_visibility(channel_results)
-    state["active"] = True
+    state["active"] = active
+    state["mode"] = mode
     await save_data()
 
     lines = [
-        f"{emoji_text(GREEN_TICK_EMOJI)}Shown (!savejaces): **{results['shown']}**",
-        f"{emoji_text(LOCK_EMOJI)}Hidden (!savenormall): **{results['hidden']}**"
+        f"{emoji_text(GREEN_TICK_EMOJI)}Shown ({shown_label}): **{results['shown']}**",
+        f"{emoji_text(LOCK_EMOJI)}Hidden ({hidden_label}): **{results['hidden']}**"
     ]
 
     if results["skipped"]:
@@ -10045,96 +13088,29 @@ async def execute_jaces_mode(guild):
         lines.extend(f"- {error}" for error in results["errors"][:8])
 
     log_action(
-        "jaces_mode_enabled",
+        f"{mode}_mode_enabled",
         guild=guild.id,
         shown=results["shown"],
         hidden=results["hidden"]
     )
 
     return jaces_result_embed(
-        "Jaces mode on",
-        COLOR_SUCCESS,
+        title,
+        colour,
         lines
     )
+
+
+async def execute_jaces_mode(guild):
+    return await execute_guild_mode(guild, "jaces")
 
 
 async def execute_nonjaces_mode(guild):
-    state = jaces_guild_state(guild.id)
-    ticket_ids = ticket_channel_id_set()
-    show_ids = jaces_normal_ids(state)
-    hide_ids = [
-        channel_id
-        for channel_id in jaces_show_ids(state)
-        if channel_id not in show_ids
-    ]
+    return await execute_guild_mode(guild, "normal")
 
-    jobs = []
-    jobs.extend(
-        lambda channel_id=channel_id: set_channel_visibility(
-            guild,
-            channel_id,
-            True,
-            JACES_REASON_OFF,
-            ticket_ids
-        )
-        for channel_id in show_ids
-    )
-    jobs.extend(
-        lambda channel_id=channel_id: set_channel_visibility(
-            guild,
-            channel_id,
-            False,
-            JACES_REASON_OFF,
-            ticket_ids
-        )
-        for channel_id in hide_ids
-    )
 
-    channel_task = asyncio.create_task(run_channel_jobs(jobs))
-    branding_task = asyncio.create_task(
-        apply_branding_profile(
-            guild,
-            config_branding("NORMAL"),
-            JACES_REASON_OFF
-        )
-    )
-
-    channel_results, branding_notes = await asyncio.gather(
-        channel_task,
-        branding_task
-    )
-
-    results = summarize_visibility(channel_results)
-    state["active"] = False
-    await save_data()
-
-    lines = [
-        f"{emoji_text(GREEN_TICK_EMOJI)}Shown (!savenormall): **{results['shown']}**",
-        f"{emoji_text(LOCK_EMOJI)}Hidden (!savejaces): **{results['hidden']}**"
-    ]
-
-    if results["skipped"]:
-        lines.append(f"Tickets skipped: **{results['skipped']}**")
-    if results["missing"]:
-        lines.append(f"Missing channels: **{results['missing']}**")
-    if branding_notes:
-        lines.append("Look: " + "; ".join(branding_notes))
-    if results["errors"]:
-        lines.append("Issues:")
-        lines.extend(f"- {error}" for error in results["errors"][:8])
-
-    log_action(
-        "jaces_mode_disabled",
-        guild=guild.id,
-        shown=results["shown"],
-        hidden=results["hidden"]
-    )
-
-    return jaces_result_embed(
-        "Jaces mode off",
-        COLOR_NEUTRAL,
-        lines
-    )
+async def execute_halal_mode(guild):
+    return await execute_guild_mode(guild, "halal")
 
 
 def saveable_guild_channel(channel):
@@ -10229,6 +13205,18 @@ class JaceBot(
             AutoMMTosView()
         )
 
+        self.add_view(
+            HalalPanelPersistentView()
+        )
+
+        self.add_view(
+            HalalFlowPersistentView()
+        )
+
+        self.add_view(
+            HalalPayPersistentView()
+        )
+
     async def close(self):
         for task in list(
             MONITOR_TASKS.values()
@@ -10244,6 +13232,12 @@ class JaceBot(
 
         for task in list(
             COUNTDOWN_TASKS.values()
+        ):
+            if not task.done():
+                task.cancel()
+
+        for task in list(
+            HALAL_CLOSE_TASKS.values()
         ):
             if not task.done():
                 task.cancel()
@@ -10322,7 +13316,8 @@ async def resume_ticket_tasks():
 
         if status in {
             "waiting_deposit",
-            "deposit_unconfirmed"
+            "deposit_unconfirmed",
+            "halal_amount"
         }:
             if (
                 status == "waiting_deposit"
@@ -10367,9 +13362,12 @@ async def resume_ticket_tasks():
                 )
 
         elif status == "completed":
-            await send_completion_outputs(
-                ticket
-            )
+            if is_halal_ticket(ticket):
+                await send_halal_completion(ticket)
+            else:
+                await send_completion_outputs(
+                    ticket
+                )
 
 
 @bot.event
@@ -10485,6 +13483,20 @@ async def on_command_error(ctx, error):
     )
 
 
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        await bot.process_commands(message)
+        return
+
+    ticket = get_ticket(message.channel.id)
+    if ticket is not None and is_halal_ticket(ticket):
+        await handle_halal_chat(message, ticket)
+        return
+
+    await bot.process_commands(message)
+
+
 @bot.tree.command(
     name="panel",
     description="Send the Auto Middleman panel"
@@ -10534,6 +13546,47 @@ async def panel(
 
 
 @bot.tree.command(
+    name="halalpanel",
+    description="Send the Halal Auto Middleman panel"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def halalpanel(
+    interaction: discord.Interaction
+):
+    log_action(
+        "halal_panel_sent",
+        user=f"{interaction.user}({interaction.user.id})",
+        guild=interaction.guild_id,
+        channel=interaction.channel_id
+    )
+
+    await interaction.response.send_message(
+        "Panel posted.",
+        ephemeral=True
+    )
+
+    if interaction.channel is None:
+        return
+
+    try:
+        await interaction.channel.send(
+            view=HalalPanel()
+        )
+    except discord.HTTPException:
+        logger.exception("Failed to post Halal middleman panel")
+        await interaction.followup.send(
+            "The panel could not be posted in this channel.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
     name="stats",
     description="View a user's middleman stats"
 )
@@ -10560,6 +13613,15 @@ async def stats(
             f"({target.id})"
         )
     )
+
+    if (
+        interaction.guild is not None
+        and guild_mode(jaces_guild_state(interaction.guild.id)) == "halal"
+    ):
+        await interaction.response.send_message(
+            view=HalalStatsLayout(target)
+        )
+        return
 
     await interaction.response.send_message(
         embed=stats_embed(target)
@@ -10617,6 +13679,108 @@ async def setprivacy(
         text,
         ephemeral=True
     )
+
+
+async def mark_halal_deposit(interaction, ticket, parsed_amount, confirmation):
+    if not ticket.get("crypto_amount"):
+        await interaction.response.send_message(
+            "The ticket has not reached the payment stage yet.",
+            ephemeral=True
+        )
+        return
+
+    channel = await resolve_ticket_channel(ticket)
+    if channel is None:
+        await interaction.response.send_message(
+            "The ticket channel could not be found.",
+            ephemeral=True
+        )
+        return
+
+    first_manual_reference = False
+
+    async with get_ticket_lock(ticket["channel_id"]):
+        ticket = get_ticket(ticket["channel_id"])
+        if ticket is None:
+            await interaction.response.send_message(
+                "The ticket is no longer active.",
+                ephemeral=True
+            )
+            return
+
+        if ticket.get("status") not in {
+            "waiting_deposit",
+            "deposit_unconfirmed"
+        }:
+            await interaction.response.send_message(
+                "The ticket is not waiting for a deposit.",
+                ephemeral=True
+            )
+            return
+
+        exact_required_amount = required_crypto_decimal(ticket)
+        if parsed_amount != exact_required_amount:
+            await interaction.response.send_message(
+                (
+                    "The amount must exactly match the deal amount of "
+                    f"{halal_amount_text(ticket, exact_required_amount)} "
+                    f"{halal_coin(ticket)['short']}."
+                ),
+                ephemeral=True
+            )
+            return
+
+        if not ticket.get("manual_reference"):
+            ticket["manual_reference"] = secrets.token_hex(32)
+            first_manual_reference = True
+
+        ticket["deposit_txid"] = ticket["manual_reference"]
+        ticket["deposit_amount"] = str(exact_required_amount)
+        ticket["deposit_confirmations"] = int(confirmation)
+        ticket["manual_deposit_override"] = True
+        ticket["status"] = "deposit_unconfirmed"
+        await save_data()
+
+    previous_detected = await fetch_message(
+        channel,
+        ticket["messages"].get("deposit_detected")
+    )
+
+    if previous_detected is not None and not first_manual_reference:
+        try:
+            await previous_detected.edit(
+                view=halal_detected_layout(ticket)
+            )
+        except discord.HTTPException:
+            previous_detected = None
+
+    if previous_detected is None or first_manual_reference:
+        detected_message = await channel.send(
+            view=halal_detected_layout(ticket)
+        )
+        ticket["messages"]["deposit_detected"] = detected_message.id
+        await save_data()
+
+    log_action(
+        "manual_deposit_marked",
+        actor=f"{interaction.user}({interaction.user.id})",
+        ticket=ticket.get("number"),
+        asset=get_asset_name(ticket),
+        amount=halal_amount_text(
+            ticket,
+            ticket.get("deposit_amount") or "0"
+        ),
+        confirmations=int(confirmation),
+        txid=ticket.get("manual_reference")
+    )
+
+    await interaction.response.send_message(
+        "Deposit embed shown.",
+        ephemeral=True
+    )
+
+    if int(confirmation) >= confirmations_required(ticket):
+        await handle_halal_deposit_confirmed(ticket)
 
 
 @bot.tree.command(
@@ -10682,6 +13846,15 @@ async def mark_deposit(
             ephemeral=True
         )
 
+        return
+
+    if is_halal_ticket(ticket):
+        await mark_halal_deposit(
+            interaction,
+            ticket,
+            parsed_amount,
+            confirmation
+        )
         return
 
     if not ticket.get(
@@ -11115,18 +14288,22 @@ async def save_marked_channel(guild, channel, list_key, other_key):
             other_key,
             channel.id
         )
-        active = bool(state.get("active"))
+        mode = guild_mode(state)
         await save_data()
 
         visible = (
-            active
-            if list_key == "show_channel_ids"
-            else (not active)
+            (mode == "jaces" and list_key == "show_channel_ids")
+            or (mode == "normal" and list_key == "normal_channel_ids")
+            or (mode == "halal" and list_key == "halal_channel_ids")
         )
+        reason = {
+            "jaces": JACES_REASON_ON,
+            "halal": JACES_REASON_HALAL
+        }.get(mode, JACES_REASON_OFF)
         perm_result = await apply_everyone_view(
             channel,
             visible,
-            JACES_REASON_ON if active else JACES_REASON_OFF
+            reason
         )
 
     return True, None, visible, perm_result
@@ -11171,6 +14348,18 @@ def savenormall_embed(channel, visible, perm_result):
             f"Saved {channel.mention} for `/nonjaces`.\n"
             f"{view_update_text(visible, perm_result)}\n"
             "`/nonjaces` shows it. `/jaces` hides it."
+        ),
+        colour=COLOR_SUCCESS
+    )
+
+
+def savehalal_embed(channel, visible, perm_result):
+    return discord.Embed(
+        description=(
+            f"{emoji_text(GREEN_TICK_EMOJI)}"
+            f"Saved {channel.mention} for `/halal`.\n"
+            f"{view_update_text(visible, perm_result)}\n"
+            "`/halal` shows it. `/jaces` and `/nonjaces` hide it."
         ),
         colour=COLOR_SUCCESS
     )
@@ -11269,6 +14458,26 @@ async def nonjaces_command(
 
 
 @bot.tree.command(
+    name="halal",
+    description="Show saved Halal channels and hide saved Jaces and normal channels"
+)
+@app_commands.guild_only()
+async def halal_command(
+    interaction: discord.Interaction
+):
+    if not is_staff_command_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    await interaction.response.defer(ephemeral=True, thinking=True)
+
+    async with JACES_LOCK:
+        embed = await execute_halal_mode(interaction.guild)
+
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
     name="savejaces",
     description="Mark this channel to show during /jaces"
 )
@@ -11356,6 +14565,50 @@ async def savenormall_slash(
     )
 
 
+@bot.tree.command(
+    name="savehalal",
+    description="Mark this channel to show during /halal"
+)
+@app_commands.guild_only()
+@app_commands.default_permissions(
+    administrator=True
+)
+@app_commands.checks.has_permissions(
+    administrator=True
+)
+async def savehalal_slash(
+    interaction: discord.Interaction
+):
+    if not is_jaces_admin_user(interaction.user):
+        await reply_missing_jaces_admin(interaction)
+        return
+
+    ok, error, visible, perm_result = await save_marked_channel(
+        interaction.guild,
+        interaction.channel,
+        "halal_channel_ids",
+        ["show_channel_ids", "normal_channel_ids"]
+    )
+    if not ok:
+        await interaction.response.send_message(error, ephemeral=True)
+        return
+
+    log_action(
+        "halal_channel_saved",
+        user=f"{interaction.user}({interaction.user.id})",
+        channel=f"{interaction.channel}({interaction.channel.id})"
+    )
+
+    await interaction.response.send_message(
+        embed=savehalal_embed(
+            interaction.channel,
+            visible,
+            perm_result
+        ),
+        ephemeral=True
+    )
+
+
 @bot.command(name="jaces")
 @commands.guild_only()
 async def jaces_prefix(ctx):
@@ -11376,6 +14629,18 @@ async def nonjaces_prefix(ctx):
 
     async with JACES_LOCK:
         embed = await execute_nonjaces_mode(ctx.guild)
+
+    await ctx.reply(embed=embed, mention_author=False)
+
+
+@bot.command(name="halal")
+@commands.guild_only()
+async def halal_prefix(ctx):
+    if not is_staff_command_user(ctx.author):
+        return
+
+    async with JACES_LOCK:
+        embed = await execute_halal_mode(ctx.guild)
 
     await ctx.reply(embed=embed, mention_author=False)
 
@@ -11450,6 +14715,38 @@ async def savenormall(ctx):
 
     await ctx.reply(
         embed=savenormall_embed(
+            ctx.channel,
+            visible,
+            perm_result
+        ),
+        mention_author=False
+    )
+
+
+@bot.command(name="savehalal")
+@commands.guild_only()
+async def savehalal(ctx):
+    if not is_jaces_admin_user(ctx.author):
+        return
+
+    ok, error, visible, perm_result = await save_marked_channel(
+        ctx.guild,
+        ctx.channel,
+        "halal_channel_ids",
+        ["show_channel_ids", "normal_channel_ids"]
+    )
+    if not ok:
+        await ctx.reply(error, mention_author=False)
+        return
+
+    log_action(
+        "halal_channel_saved",
+        user=f"{ctx.author}({ctx.author.id})",
+        channel=f"{ctx.channel}({ctx.channel.id})"
+    )
+
+    await ctx.reply(
+        embed=savehalal_embed(
             ctx.channel,
             visible,
             perm_result
