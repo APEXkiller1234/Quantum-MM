@@ -1878,6 +1878,8 @@ async def send_demo_completed_activity():
     halal_channel = await resolve_demo_channel(
         DEMO_HALAL_COMPLETED_CHANNEL
     )
+    if halal_channel is None:
+        halal_channel = channel
 
     if channel is None and halal_channel is None:
         logger.error(
@@ -2737,6 +2739,25 @@ async def resolve_trader(
             return member
 
     return None
+
+
+def extract_user_ids(text):
+    text = str(text or "")
+    found = []
+    seen = set()
+    for group in re.findall(r"<@!?(\d{17,20})>", text):
+        uid = int(group)
+        if uid not in seen:
+            seen.add(uid)
+            found.append(uid)
+    raw = re.findall(r"\d{17,20}", text)
+    raw.sort(key=len, reverse=True)
+    for group in raw:
+        uid = int(group)
+        if uid not in seen:
+            seen.add(uid)
+            found.append(uid)
+    return found
 
 
 async def fetch_message(
@@ -10012,27 +10033,19 @@ def build_halal_complete_layout(
         if real_tx
         else f"`{short_tx or 'Manual'}`"
     )
-    thumb = halal_thumb(custom_emoji_cdn_url(emoji))
-    if thumb is None and emoji:
-        heading = f"{H2} {emoji} {title}"
-    else:
-        heading = f"{H2} {title}"
-    body = (
+    emoji_url = custom_emoji_cdn_url(emoji)
+    heading = (
+        f"{H2} {emoji} {title}"
+        if emoji and not emoji_url
+        else f"{H2} {title}"
+    )
+    text = (
+        f"{heading}\n"
         f"**Amount**\n`{amount}` {short} ({money(usd)} USD)\n"
         f"**Sender** {sender}    **Receiver** {receiver}\n"
         f"**Transaction**\n{tx_md}"
     )
-    items = []
-    if thumb is None:
-        items.append(discord.ui.TextDisplay(f"{heading}\n{body}"))
-    else:
-        items.append(
-            discord.ui.Section(
-                discord.ui.TextDisplay(heading),
-                accessory=thumb
-            )
-        )
-        items.append(discord.ui.TextDisplay(body))
+    items = with_optional_thumb(text, emoji_url)
     if real_tx:
         items.append(
             discord.ui.ActionRow(
@@ -11326,7 +11339,7 @@ async def add_halal_trader(channel, ticket, trader):
 async def maybe_start_halal_roles(channel, ticket):
     if not ticket.get("deal_type") or not ticket.get("trader_id"):
         return
-    if ticket.get("status") in {
+    if ticket.get("messages", {}).get("role_selection") and ticket.get("status") in {
         "halal_role_selection",
         "halal_role_confirmation",
         "halal_details",
@@ -11335,6 +11348,17 @@ async def maybe_start_halal_roles(channel, ticket):
         "halal_amount_confirm",
         "waiting_deposit",
         "trade"
+    }:
+        return
+    if ticket.get("status") in {
+        "halal_role_confirmation",
+        "halal_details",
+        "halal_details_confirm",
+        "halal_amount",
+        "halal_amount_confirm",
+        "waiting_deposit",
+        "trade",
+        "completed"
     }:
         return
     welcome = (
@@ -11653,18 +11677,51 @@ async def handle_halal_chat(message, ticket):
             pass
         return True
 
-    if status in {"halal_setup", "halal_waiting_trader"} and not ticket.get("trader_id"):
+    if (
+        ticket.get("deal_type")
+        and ticket.get("trader_id")
+        and not ticket.get("messages", {}).get("role_selection")
+        and status in {
+            "halal_setup",
+            "halal_waiting_trader",
+            "halal_role_selection"
+        }
+    ):
+        await maybe_start_halal_roles(message.channel, ticket)
+        return True
+
+    waiting_trader = (
+        status in {"halal_setup", "halal_waiting_trader"}
+        or (
+            bool(ticket.get("deal_type"))
+            and not ticket.get("trader_id")
+            and status not in {
+                "halal_role_selection",
+                "halal_role_confirmation",
+                "halal_details",
+                "halal_details_confirm",
+                "halal_amount",
+                "halal_amount_confirm",
+                "waiting_deposit",
+                "trade"
+            }
+        )
+    )
+    if waiting_trader and not ticket.get("trader_id"):
         if not ticket.get("deal_type"):
             return await reject()
-        if int(message.author.id) != int(ticket.get("opener_id") or 0):
+        opener = int(ticket.get("opener_id") or 0)
+        if int(message.author.id) != opener and not staff:
             return await reject()
         if not content:
             return await reject()
-        trader = await resolve_trader(message.guild, content)
+        trader = None
+        for user_id in extract_user_ids(content):
+            trader = await resolve_trader(message.guild, str(user_id))
+            if trader is not None:
+                break
         if trader is None:
-            snowflake = re.search(r"\d{17,20}", content)
-            if snowflake:
-                trader = await resolve_trader(message.guild, snowflake.group(0))
+            trader = await resolve_trader(message.guild, content)
         if trader is None:
             await message.channel.send(
                 "Could not find that Discord user."
@@ -11675,7 +11732,13 @@ async def handle_halal_chat(message, ticket):
                 "Please paste the UserID of the user you are dealing with."
             )
             return True
-        await add_halal_trader(message.channel, ticket, trader)
+        try:
+            await add_halal_trader(message.channel, ticket, trader)
+        except Exception:
+            logger.exception("Failed to add Halal trader / start roles")
+            await message.channel.send(
+                "Could not start role selection. Paste the UserID again."
+            )
         return True
 
     if status == "halal_details":
@@ -13735,7 +13798,14 @@ async def on_message(message):
 
     ticket = get_ticket(message.channel.id)
     if ticket is not None and is_halal_ticket(ticket):
-        handled = await handle_halal_chat(message, ticket)
+        try:
+            handled = await handle_halal_chat(message, ticket)
+        except Exception:
+            logger.exception(
+                "Halal ticket chat failed | channel=%s",
+                message.channel.id
+            )
+            handled = False
         if handled:
             return
 
