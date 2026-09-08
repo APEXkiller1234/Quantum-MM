@@ -2674,87 +2674,77 @@ def start_baseline(ticket):
     )
 
 
-async def resolve_trader(
-    guild,
-    value
-):
-    value = value.strip()
-
-    mention = re.fullmatch(
-        r"<@!?(\d+)>",
-        value
-    )
-
-    if mention:
-        user_id = int(
-            mention.group(1)
-        )
-
-        member = guild.get_member(
-            user_id
-        )
-
-        if member is not None:
-            return member
-
-        try:
-            return await guild.fetch_member(
-                user_id
-            )
-
-        except discord.HTTPException:
-            return None
-
-    if value.isdigit():
-        user_id = int(
-            value
-        )
-
-        member = guild.get_member(
-            user_id
-        )
-
-        if member is not None:
-            return member
-
-        try:
-            return await guild.fetch_member(
-                user_id
-            )
-
-        except discord.HTTPException:
-            pass
-
-        try:
-            found = await guild.query_members(
-                user_ids=[user_id],
-                limit=1
-            )
-            if found:
-                return found[0]
-        except discord.HTTPException:
-            pass
-
+async def resolve_guild_member(guild, user_id):
+    try:
+        user_id = int(user_id)
+    except (TypeError, ValueError):
+        return None
+    if user_id <= 0 or guild is None:
         return None
 
-    lowered = (
-        value.lower()
-        .lstrip("@")
-    )
+    member = guild.get_member(user_id)
+    if member is not None:
+        return member
 
-    for member in guild.members:
-        if lowered in {
-            member.name.lower(),
-            member.display_name.lower(),
-            str(member).lower()
-        }:
-            return member
+    try:
+        return await guild.fetch_member(user_id)
+    except discord.NotFound:
+        return None
+    except discord.HTTPException:
+        pass
+
+    try:
+        found = await guild.query_members(user_ids=[user_id], limit=1)
+        if found:
+            return found[0]
+    except (TypeError, ValueError, discord.HTTPException):
+        pass
 
     return None
 
 
+async def resolve_trader(
+    guild,
+    value
+):
+    value = unicodedata.normalize("NFKC", str(value or ""))
+    value = re.sub(r"[\u200b-\u200d\ufeff]", "", value).strip()
+    if not value or guild is None:
+        return None
+
+    mention = re.fullmatch(r"<@!?(\d{17,20})>", value)
+    if mention:
+        return await resolve_guild_member(guild, mention.group(1))
+
+    digits = re.fullmatch(r"\d{17,20}", value)
+    if digits:
+        return await resolve_guild_member(guild, digits.group(0))
+
+    lowered = value.lower().lstrip("@")
+    names = lambda member: {
+        member.name.lower(),
+        member.display_name.lower(),
+        str(member).lower(),
+        str(getattr(member, "global_name", "") or "").lower()
+    }
+    for member in guild.members:
+        if lowered in names(member):
+            return member
+
+    if len(lowered) >= 2:
+        try:
+            found = await guild.query_members(query=lowered[:32], limit=5)
+        except (TypeError, discord.HTTPException):
+            found = []
+        for member in found or []:
+            if lowered in names(member):
+                return member
+
+    return None
+
 def extract_user_ids(text):
-    text = str(text or "")
+    text = unicodedata.normalize("NFKC", str(text or ""))
+    text = re.sub(r"[\u200b-\u200d\ufeff]", "", text)
     found = []
     seen = set()
     for group in re.findall(r"<@!?(\d{17,20})>", text):
@@ -10003,10 +9993,14 @@ def custom_emoji_cdn_url(emoji):
     if not match:
         return ""
     ext = "gif" if match.group(1) == "a" else "png"
-    return (
-        f"https://cdn.discordapp.com/emojis/{match.group(2)}.{ext}"
-        "?size=128&quality=lossless"
-    )
+    return f"https://cdn.discordapp.com/emojis/{match.group(2)}.{ext}"
+
+
+def halal_short_txid(txid):
+    txid = str(txid or "")
+    if len(txid) <= 16:
+        return txid
+    return f"{txid[:6]}...{txid[-8:]}"
 
 
 def halal_privacy_name(user_id, private=True):
@@ -11824,7 +11818,7 @@ async def handle_halal_chat(message, ticket):
             await redo_halal_userid_prompt(
                 message.channel,
                 ticket,
-                "Could not find that Discord user. Paste their UserID or mention."
+                "That user is not in this server. They must join, then paste their UserID or @mention."
             )
             return True
         if trader.bot or trader.id == message.author.id:
