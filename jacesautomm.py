@@ -32,7 +32,7 @@ TRANSCRIPT_CHANNEL = 1543639039868149910 # Auto Middleman Tickets Logging Channe
 COMPLETED_TRANSACTION_CHANNEL = 1543637629243891764 # Completed Auto Middleman Embeds Channel ID
 SETTLEMENT_CHANNEL = 1543639039868149910
 DEMO_COMPLETED_TRANSACTION_CHANNEL = 1543637640459325551 # Must be different from COMPLETED_TRANSACTION_CHANNEL
-DEMO_HALAL_COMPLETED_CHANNEL = 0 # Halal-format copy of the same demo post. 0 = off. Does not use extra APIs.
+DEMO_HALAL_COMPLETED_CHANNEL = 1546838969981993030 # Halal-format copy of the same demo post. 0 = off. Does not use extra APIs.
 TUTORIAL_URL = "https://www.youtube.com/watch?v=XIkpcT2WNPI" # For Tutorial Button in Panel
 
 LTC_DEPOSIT_ADDRESS = "LduBxCtH1jTrhmccGvZExDQHmhWB9r2d9D" # Your Litecoin Address
@@ -167,9 +167,9 @@ HALAL_USDT_EMOJI = "<:halal_usdteth:1546837193790717982>"
 HALAL_USDC_EMOJI = "<:halal_usdceth:1546837185657962516>"
 HALAL_USDT_ERC20_EMOJI = "<:halal_usdteth:1546837193790717982>"
 HALAL_USDC_ERC20_EMOJI = "<:halal_usdceth:1546837185657962516>"
-HALAL_USDT_BEP20_EMOJI = "<:halal_usdtbep:1546837193790717982>"
-HALAL_USDT_SOL_EMOJI = "<:halal_usdtsol:1546837193790717982>"
-HALAL_USDC_SOL_EMOJI = "<:halal_usdcsol:1546837185657962516>"
+HALAL_USDT_BEP20_EMOJI = "<:halal_usdt_bsc:1546837178250698843>"
+HALAL_USDT_SOL_EMOJI = "<:halal_usdtsol:1546837172341055529>"
+HALAL_USDC_SOL_EMOJI = "<:halal_usdcsol:1546837162404880464>"
 
 
 # ===== Emojis ========
@@ -10003,6 +10003,27 @@ def halal_short_txid(txid):
     return f"{txid[:6]}...{txid[-8:]}"
 
 
+def halal_card_txid(txid):
+    txid = str(txid or "")
+    if len(txid) <= 16:
+        return txid
+    return f"{txid[:8]}...{txid[-8:]}"
+
+
+def halal_tx_line(ticket, txid):
+    short = halal_card_txid(txid) if txid else "Manual"
+    if (
+        not txid
+        or is_manual_reference(txid)
+        or is_simulation_reference(txid)
+    ):
+        return f"**Transaction**\n`{short}`"
+    link = tx_link(txid, ticket.get("type"))
+    if not link:
+        return f"**Transaction**\n`{short}`"
+    return f"**Transaction**\n[{short}]({link})"
+
+
 def halal_privacy_name(user_id, private=True):
     if private or not user_id:
         return "`Anonymous`"
@@ -10702,9 +10723,9 @@ class HalalCopyDetailsButton(discord.ui.Button):
         await interaction.response.edit_message(
             view=HalalInvoiceLayout(ticket, copied=True)
         )
+        await interaction.channel.send(ticket.get("deposit_address") or "")
+        await interaction.channel.send(halal_amount_text(ticket))
         await interaction.channel.send(
-            f"{ticket.get('deposit_address')}\n"
-            f"{halal_amount_text(ticket)}\n"
             "Copy the payment details above. No funds have been received yet."
         )
 
@@ -10781,26 +10802,38 @@ class HalalInvoiceLayout(discord.ui.LayoutView):
         amount = halal_amount_text(ticket)
         usd = money(ticket.get("usd_amount") or "0")
         rate = ticket.get("crypto_price")
+        short = coin.get("short") or ""
         rate_line = ""
         if rate and coin.get("price"):
-            rate_line = (
-                f"Exchange Rate: 1 {coin.get('short')} = "
-                f"{money(rate)} USD"
-            )
+            rate_line = f"Exchange Rate: 1{short}={money(rate)} USD"
         sender = f"<@{ticket['sender_id']}>"
-        summary_text = (
-            f"{H2} Deal Summary\n"
-            "Refer to this deal summary for any reaffirmations. "
-            "Notify staff for any support required.\n\n"
-            f"**Sender:** <@{ticket['sender_id']}>\n"
-            f"**Receiver:** <@{ticket['receiver_id']}>\n"
-            f"**Coin:** {coin.get('emoji', '')} {coin.get('label')}\n"
-            f"**Deal Amount:** `{usd}`\n"
-            f"**Deal:** {halal_deal_type(ticket)[1] if halal_deal_type(ticket) else 'Deal'}"
-            f" - {ticket.get('deal_details') or ''}"
+        deal = halal_deal_type(ticket)
+        deal_label = deal[1] if deal else "Deal"
+        details = ticket.get("deal_details") or ""
+        summary_items = with_optional_thumb(
+            (
+                f"{H2} 📋 Deal Summary\n"
+                "Refer to this deal summary for any reaffirmations. "
+                "Notify staff for any support required."
+            ),
+            HALAL_MASCOT_IMAGE
         )
+        for field in (
+            f"**Sender:** <@{ticket['sender_id']}>",
+            f"**Receiver:** <@{ticket['receiver_id']}>",
+            f"**Coin:** {coin.get('emoji', '')} {coin.get('label')}",
+            f"**Deal Amount:** `{usd}`",
+            f"**Deal:** {deal_label} - {details}"
+        ):
+            summary_items.append(
+                discord.ui.Separator(
+                    visible=True,
+                    spacing=discord.SeparatorSpacing.small
+                )
+            )
+            summary_items.append(discord.ui.TextDisplay(field))
         invoice_header = (
-            f"{H2} Payment Invoice\n"
+            f"{H2} 🧾 Payment Invoice\n"
             f"{sender} Send the funds as part of the deal to the Middleman "
             "address specified below. Please copy the amount provided."
         )
@@ -10809,13 +10842,7 @@ class HalalInvoiceLayout(discord.ui.LayoutView):
             buttons.append(HalalCopyDetailsButton())
         buttons.extend([HalalCancelDealButton(), HalalCheckDepositButton()])
         self.add_item(
-            discord.ui.Container(
-                *with_optional_thumb(
-                    summary_text,
-                    custom_emoji_cdn_url(coin.get("emoji"))
-                ),
-                accent_colour=COLOR_HALAL_GRAY
-            )
+            discord.ui.Container(*summary_items, accent_colour=COLOR_HALAL_GRAY)
         )
         self.add_item(discord.ui.TextDisplay(sender))
         invoice_items = with_optional_thumb(
@@ -10833,7 +10860,7 @@ class HalalInvoiceLayout(discord.ui.LayoutView):
             ),
             discord.ui.Section(
                 discord.ui.TextDisplay(
-                    f"**Amount:**\n`{amount}` {coin.get('short')} ({usd} USD)"
+                    f"**Amount:**\n`{amount}` {short} ({usd} USD)"
                 ),
                 accessory=HalalCopyFieldButton("amount")
             )
@@ -11160,14 +11187,14 @@ class HalalCompleteLayout(discord.ui.LayoutView):
             discord.ui.Container(
                 discord.ui.TextDisplay(f"{H2} Deal Complete"),
                 discord.ui.TextDisplay(
-                    "Thank you for using Halal. This deal has been successfully completed.\n\n"
+                    "Thank you for using **Halal**. This deal has been successfully completed.\n\n"
                     "If you'd like to make your vouch public, use `/setprivacy` in Halal MM.\n\n"
                     "This ticket will automatically close in 5 minutes."
                 ),
-                discord.ui.ActionRow(HalalCompleteCloseButton()),
-                accent_colour=COLOR_HALAL_GRAY
+                accent_colour=COLOR_HALAL_GREEN
             )
         )
+        self.add_item(discord.ui.ActionRow(HalalCompleteCloseButton()))
 
 
 class HalalStatsLayout(discord.ui.LayoutView):
@@ -11219,30 +11246,17 @@ def detected_layout(ticket):
         ticket.get("deposit_amount") or ticket.get("crypto_amount")
     )
     needed = int(coin.get("confirmations") or 1)
-    word = "confirmation" if needed == 1 else "confirmations"
-    if (
-        ticket.get("manual_deposit_override")
-        or is_manual_reference(txid)
-        or is_simulation_reference(txid)
-        or not txid
-    ):
-        tx_line = f"**Transaction**\n`{short_txid(txid) if txid else 'Manual'}`"
-    else:
-        tx_line = (
-            f"**Transaction**\n[{short_txid(txid)}]({tx_link(txid, ticket.get('type'))})"
-        )
+    usd = money(ticket.get("usd_amount") or "0")
     text = (
         f"{H2} Transaction Detected\n"
-        "The transaction is currently **unconfirmed** and waiting for "
-        f"{needed} {word}.\n\n"
-        f"{tx_line}\n"
-        f"**Amount Received**\n`{amount}` {coin.get('short')} "
-        f"({money(ticket.get('usd_amount') or '0')})\n"
-        f"**Required Amount**\n`{halal_amount_text(ticket)}` {coin.get('short')} "
-        f"({money(ticket.get('usd_amount') or '0')})"
+        "Your payment has been detected on the network. "
+        "Please wait while it receives the required confirmations.\n\n"
+        f"{halal_tx_line(ticket, txid)}\n"
+        f"**Amount Received**\n`{amount}` {coin.get('short')} ≈ `{usd}` USD\n"
+        f"**Required Confirmations**\n`{needed}`"
     )
     return TinyLayout(
-        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
         accent=COLOR_HALAL_ORANGE
     )
 
@@ -11254,25 +11268,18 @@ def received_layout(ticket):
         ticket,
         ticket.get("deposit_amount") or ticket.get("crypto_amount")
     )
-    if (
-        ticket.get("manual_deposit_override")
-        or is_manual_reference(txid)
-        or is_simulation_reference(txid)
-        or not txid
-    ):
-        tx_line = f"**Transaction**\n`{short_txid(txid) if txid else 'Manual'}`"
-    else:
-        tx_line = (
-            f"**Transaction**\n[{short_txid(txid)}]({tx_link(txid, ticket.get('type'))})"
-        )
+    confirms = int(ticket.get("deposit_confirmations") or coin.get("confirmations") or 1)
+    usd = money(ticket.get("usd_amount") or "0")
     text = (
-        f"{H2} Transaction Confirmed!\n"
-        f"{tx_line}\n"
-        f"**Total Amount Received**\n`{amount}` {coin.get('short')} "
-        f"({money(ticket.get('usd_amount') or '0')})"
+        f"{H2} ✅ Payment Received\n"
+        "The payment is now secured, and has reached the required amount of "
+        "confirmations.\n\n"
+        f"{halal_tx_line(ticket, txid)}\n"
+        f"**Confirmations**\n`{confirms}`\n"
+        f"**Amount Received**\n`{amount}` {coin.get('short')} (`{usd}` USD)"
     )
     return TinyLayout(
-        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
         accent=COLOR_HALAL_GREEN
     )
 
@@ -11284,16 +11291,15 @@ def released_layout(ticket):
         ticket,
         ticket.get("payout_amount") or ticket.get("deposit_amount")
     )
-    link = tx_link(txid, ticket.get("type"))
+    usd = money(ticket.get("usd_amount") or "0")
     text = (
-        f"{H2} Payment Released\n"
+        f"{H2} 💰 Payment Released\n"
         f"The funds have been successfully released to the provided {coin.get('label')} address.\n\n"
-        f"**Amount**\n`{amount}` {coin.get('short')} ≈ "
-        f"{money(ticket.get('usd_amount') or '0')} USD\n"
-        f"**Transaction**\n[{short_txid(txid)}]({link})"
+        f"**Amount**\n`{amount}` {coin.get('short')} ≈ `{usd}` USD\n"
+        f"{halal_tx_line(ticket, txid)}"
     )
     return TinyLayout(
-        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
+        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
         accent=COLOR_HALAL_GREEN
     )
 
@@ -12982,9 +12988,9 @@ async def apply_bot_presence():
     )
 
 
-async def apply_bot_bio(text):
+async def apply_bot_bio(text, clear_if_empty=False):
     bio = str(text or "").strip()
-    if not bio:
+    if not bio and not clear_if_empty:
         return None
 
     try:
@@ -12993,15 +12999,19 @@ async def apply_bot_bio(text):
         return f"bot bio failed: {error}"
 
     current = str(getattr(app, "description", None) or "").strip()
-    if current == bio:
+    target = bio[:400] if bio else ""
+    if current == target:
         return None
 
     try:
-        await app.edit(description=bio[:400])
-    except (TypeError, discord.HTTPException) as error:
-        return f"bot bio failed: {error}"
+        await app.edit(description=target or None)
+    except (TypeError, discord.HTTPException):
+        try:
+            await app.edit(description=target)
+        except (TypeError, discord.HTTPException) as error:
+            return f"bot bio failed: {error}"
 
-    return "bot bio updated"
+    return "bot bio updated" if target else None
 
 
 async def apply_profile_presence(profile):
@@ -13332,11 +13342,29 @@ async def apply_one_edit(label, editor):
         return f"{label} failed: {error}"
 
 
+async def clear_profile_image(editor):
+    for payload in (None, b""):
+        try:
+            await editor(payload)
+            return True
+        except TypeError:
+            continue
+        except discord.HTTPException:
+            return False
+    return False
+
+
 async def apply_branding_profile(guild, profile, reason):
     notes = []
 
     if not branding_has_values(profile):
         notes.extend(await apply_profile_presence(profile))
+        if guild is not None:
+            await clear_profile_image(
+                lambda payload: guild.edit(banner=payload, reason=reason)
+            )
+        if bot.user is not None:
+            await clear_profile_image(lambda payload: bot.user.edit(banner=payload))
         return notes
 
     server_name = str(profile.get("server_name") or "").strip()
@@ -13380,6 +13408,10 @@ async def apply_branding_profile(guild, profile, reason):
                 lambda: guild.edit(banner=banner_bytes, reason=reason)
             )
         )
+    elif not str(profile.get("server_banner") or "").strip():
+        await clear_profile_image(
+            lambda payload: guild.edit(banner=payload, reason=reason)
+        )
 
     bot_name = str(profile.get("bot_name") or "").strip()
     avatar_bytes = await read_asset_bytes(profile.get("bot_avatar"))
@@ -13410,10 +13442,7 @@ async def apply_branding_profile(guild, profile, reason):
                 )
             )
         elif not str(profile.get("bot_banner") or "").strip():
-            try:
-                await bot.user.edit(banner=None)
-            except (TypeError, discord.HTTPException):
-                pass
+            await clear_profile_image(lambda payload: bot.user.edit(banner=payload))
 
     role_name = str(profile.get("bot_role_name") or "").strip()
     if role_name:
@@ -13428,7 +13457,10 @@ async def apply_branding_profile(guild, profile, reason):
                 )
             )
 
-    notes.extend(await apply_profile_presence(profile))
+    try:
+        notes.extend(await apply_profile_presence(profile))
+    except Exception:
+        logger.exception("Failed to apply bot presence or bio")
 
     return notes
 
