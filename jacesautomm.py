@@ -10512,11 +10512,12 @@ class HalalRoleSelectionLayout(discord.ui.LayoutView):
 
 
 class HalalRoleConfirmButton(discord.ui.Button):
-    def __init__(self, role):
+    def __init__(self, role, disabled=False):
         super().__init__(
             label="Confirm",
             style=discord.ButtonStyle.success,
-            custom_id=f"halal_role_confirm_{role}"
+            custom_id=f"halal_role_confirm_{role}",
+            disabled=disabled
         )
         self.role = role
 
@@ -11478,8 +11479,11 @@ async def maybe_start_halal_roles(channel, ticket):
         "trade"
     }:
         return
+    if ticket.get("status") == "halal_role_confirmation":
+        if not ticket.get("messages", {}).get("role_confirmation"):
+            await send_halal_role_confirmation(channel, ticket)
+        return
     if ticket.get("status") in {
-        "halal_role_confirmation",
         "halal_details",
         "halal_details_confirm",
         "halal_amount",
@@ -11512,6 +11516,15 @@ async def send_halal_role_selection(channel, ticket, ping=None):
     )
     ticket.setdefault("messages", {})["role_selection"] = message.id
     await save_data()
+
+
+async def send_halal_role_confirmation(channel, ticket):
+    ticket["status"] = "halal_role_confirmation"
+    await save_data()
+    message = await channel.send(view=HalalRoleConfirmationLayout(ticket))
+    ticket.setdefault("messages", {})["role_confirmation"] = message.id
+    await save_data()
+    return message
 
 
 async def choose_halal_role(interaction, role):
@@ -11549,15 +11562,14 @@ async def choose_halal_role(interaction, role):
         ticket["status"] = "halal_role_confirmation"
         ticket["role_confirmed"] = []
         await save_data()
+        view = HalalRoleConfirmationLayout(ticket)
         await consume_halal_prompt(
             interaction,
             ticket,
             "role_selection",
             "role_ping"
         )
-        message = await interaction.channel.send(
-            view=HalalRoleConfirmationLayout(ticket)
-        )
+        message = await interaction.channel.send(view=view)
         ticket["messages"]["role_confirmation"] = message.id
         await save_data()
         return
@@ -11851,6 +11863,15 @@ async def handle_halal_chat(message, ticket):
         }
     ):
         await maybe_start_halal_roles(message.channel, ticket)
+        return True
+
+    if (
+        status == "halal_role_confirmation"
+        and not ticket.get("messages", {}).get("role_confirmation")
+        and ticket.get("sender_id")
+        and ticket.get("receiver_id")
+    ):
+        await send_halal_role_confirmation(message.channel, ticket)
         return True
 
     waiting_trader = (
