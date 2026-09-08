@@ -9904,6 +9904,31 @@ def is_halal_party(user, ticket):
         return False
 
 
+def halal_address_sent(ticket):
+    if not ticket:
+        return False
+    if ticket.get("deposit_address") or ticket.get("chat_unlocked"):
+        return True
+    return ticket.get("status") in {
+        "waiting_deposit",
+        "halal_waiting_deposit",
+        "deposit_unconfirmed",
+        "deposit_confirmed",
+        "trade",
+        "cancellation",
+        "release_confirmation",
+        "address_prompt",
+        "address_confirmation",
+        "sending_crypto",
+        "settlement_pending",
+        "completed"
+    }
+
+
+def can_admin_close_halal(user):
+    return is_admin(user) or is_jaces_admin_user(user)
+
+
 async def get_halal_ticket_category(guild):
     channel_id = int(HALAL_TICKET_CATEGORY or 0) or TICKET_CATEGORY
     configured = guild.get_channel(channel_id)
@@ -11190,12 +11215,9 @@ class HalalCompleteCloseButton(discord.ui.Button):
                 ephemeral=True
             )
             return
-        if (
-            not is_halal_party(interaction.user, ticket)
-            and not is_admin(interaction.user)
-        ):
+        if not can_admin_close_halal(interaction.user):
             await interaction.response.send_message(
-                "You cannot close this ticket.",
+                "Only admins can close this ticket after the payment address is sent.",
                 ephemeral=True
             )
             return
