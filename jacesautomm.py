@@ -10345,11 +10345,36 @@ async def delete_ticket_message(channel, message_id):
         pass
 
 
+async def delete_chat_message(message):
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except discord.HTTPException:
+        pass
+
+
+def remember_halal_message(ticket, key, message_id):
+    if ticket is None or not message_id:
+        return
+    messages = ticket.setdefault("messages", {})
+    existing = messages.get(key)
+    if existing is None:
+        messages[key] = message_id
+    elif isinstance(existing, list):
+        if message_id not in existing:
+            existing.append(message_id)
+    elif existing != message_id:
+        messages[key] = [existing, message_id]
+
+
 async def delete_halal_keys(channel, ticket, *keys):
     messages = ticket.setdefault("messages", {})
     for key in keys:
-        await delete_ticket_message(channel, messages.get(key))
-        messages.pop(key, None)
+        value = messages.pop(key, None)
+        ids = value if isinstance(value, list) else [value]
+        for message_id in ids:
+            await delete_ticket_message(channel, message_id)
 
 
 async def consume_halal_prompt(interaction, ticket, *keys):
@@ -10363,10 +10388,26 @@ async def consume_halal_prompt(interaction, ticket, *keys):
         await save_data()
 
 
+async def send_halal_correct(channel, ticket, user, key):
+    message = await channel.send(
+        view=halal_text_container(
+            f"{user.mention} has responded with 'Correct'",
+            COLOR_HALAL_GRAY
+        ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True, roles=False, everyone=False
+        )
+    )
+    remember_halal_message(ticket, key, message.id)
+    return message
+
+
 async def redo_halal_userid_prompt(channel, ticket, error_text):
+    await delete_halal_keys(channel, ticket, "userid_error")
     err = await channel.send(error_text)
     ticket.setdefault("messages", {})["userid_error"] = err.id
     await send_halal_lets_start(channel, ticket, force=True)
+    await save_data()
 
 
 class HalalSelectRoleButton(discord.ui.Button):
@@ -10487,7 +10528,8 @@ class HalalReturnButton(discord.ui.Button):
         await consume_halal_prompt(
             interaction,
             ticket,
-            "role_confirmation"
+            "role_confirmation",
+            "role_correct"
         )
         await send_halal_role_selection(interaction.channel, ticket)
 
@@ -10497,6 +10539,9 @@ class HalalRoleConfirmationLayout(discord.ui.LayoutView):
         super().__init__(timeout=None)
         coin = halal_coin(ticket)
         label = coin.get("label") or "Crypto"
+        confirmed = {int(user_id) for user_id in (ticket.get("role_confirmed") or [])}
+        sender_done = int(ticket.get("sender_id") or 0) in confirmed
+        receiver_done = int(ticket.get("receiver_id") or 0) in confirmed
         self.add_item(
             discord.ui.Container(
                 discord.ui.TextDisplay(f"{H2} Role Confirmation"),
@@ -10508,7 +10553,7 @@ class HalalRoleConfirmationLayout(discord.ui.LayoutView):
                     discord.ui.TextDisplay(
                         f"Sending {label}: <@{ticket['sender_id']}>"
                     ),
-                    accessory=HalalRoleConfirmButton("sender")
+                    accessory=HalalRoleConfirmButton("sender", disabled=sender_done)
                 ),
                 discord.ui.Separator(
                     visible=True,
@@ -10518,7 +10563,7 @@ class HalalRoleConfirmationLayout(discord.ui.LayoutView):
                     discord.ui.TextDisplay(
                         f"Receiving {label}: <@{ticket['receiver_id']}>"
                     ),
-                    accessory=HalalRoleConfirmButton("receiver")
+                    accessory=HalalRoleConfirmButton("receiver", disabled=receiver_done)
                 ),
                 discord.ui.TextDisplay(
                     "Selecting the wrong role will result in getting scammed!"
@@ -10657,7 +10702,7 @@ class HalalCopyDetailsButton(discord.ui.Button):
         await interaction.response.edit_message(
             view=HalalInvoiceLayout(ticket, copied=True)
         )
-        await interaction.followup.send(
+        await interaction.channel.send(
             f"{ticket.get('deposit_address')}\n"
             f"{halal_amount_text(ticket)}\n"
             "Copy the payment details above. No funds have been received yet."
@@ -11037,7 +11082,11 @@ class HalalAddressBackButton(discord.ui.Button):
         ticket["receiver_address"] = None
         ticket["status"] = "address_prompt"
         await save_data()
-        await ack_halal_interaction(interaction)
+        await consume_halal_prompt(
+            interaction,
+            ticket,
+            "address_confirmation"
+        )
         await send_halal_address_prompt(interaction.channel, ticket)
 
 
@@ -11451,7 +11500,9 @@ async def send_halal_role_selection(channel, ticket, ping=None):
     message = await send_halal_layout(
         channel,
         HalalRoleSelectionLayout(ticket),
-        ping=ping
+        ping=ping,
+        ticket=ticket,
+        ping_key="role_ping"
     )
     ticket.setdefault("messages", {})["role_selection"] = message.id
     await save_data()
@@ -11544,14 +11595,12 @@ async def confirm_halal_role(interaction, role):
     if both:
         ticket["status"] = "halal_details"
     await save_data()
-    await interaction.response.send_message(
-        view=halal_text_container(
-            f"{interaction.user.mention} has responded with 'Correct'",
-            COLOR_HALAL_GRAY
-        ),
-        allowed_mentions=discord.AllowedMentions(
-            users=True, roles=False, everyone=False
-        )
+    await ack_halal_interaction(interaction)
+    await send_halal_correct(
+        interaction.channel,
+        ticket,
+        interaction.user,
+        "role_correct"
     )
     if both:
         try:
@@ -11561,10 +11610,19 @@ async def confirm_halal_role(interaction, role):
         await delete_halal_keys(
             interaction.channel,
             ticket,
-            "role_confirmation"
+            "role_confirmation",
+            "role_selection",
+            "role_ping",
+            "role_correct"
         )
         await save_data()
         await send_halal_details_prompt(interaction.channel, ticket)
+        return
+    try:
+        await interaction.message.edit(view=HalalRoleConfirmationLayout(ticket))
+    except discord.HTTPException:
+        pass
+    await save_data()
 
 
 async def send_halal_details_prompt(channel, ticket):
@@ -11655,7 +11713,8 @@ async def confirm_halal_details(interaction, correct):
         "details_confirm",
         "details_confirm_ping",
         "deal_details",
-        "details_ping"
+        "details_ping",
+        "user_details"
     )
     if not correct:
         await send_halal_details_prompt(interaction.channel, ticket)
@@ -11684,7 +11743,10 @@ async def confirm_halal_amount(interaction, correct):
         await consume_halal_prompt(
             interaction,
             ticket,
-            "amount_confirm"
+            "amount_confirm",
+            "amount_correct",
+            "amount_error",
+            "user_amount"
         )
         await send_halal_amount_prompt(interaction.channel, ticket)
         return
@@ -11702,14 +11764,12 @@ async def confirm_halal_amount(interaction, correct):
         int(ticket["receiver_id"])
     }.issubset(set(confirmed))
     await save_data()
-    await interaction.response.send_message(
-        view=halal_text_container(
-            f"{interaction.user.mention} has responded with 'Correct'",
-            COLOR_HALAL_GRAY
-        ),
-        allowed_mentions=discord.AllowedMentions(
-            users=True, roles=False, everyone=False
-        )
+    await ack_halal_interaction(interaction)
+    await send_halal_correct(
+        interaction.channel,
+        ticket,
+        interaction.user,
+        "amount_correct"
     )
     if both:
         try:
@@ -11721,10 +11781,15 @@ async def confirm_halal_amount(interaction, correct):
             ticket,
             "amount_confirm",
             "deal_amount",
-            "amount_ping"
+            "amount_ping",
+            "amount_correct",
+            "amount_error",
+            "user_amount"
         )
         await save_data()
         await send_halal_payment(interaction.channel, ticket)
+        return
+    await save_data()
 
 
 def valid_crypto_address(coin, address):
@@ -11815,6 +11880,7 @@ async def handle_halal_chat(message, ticket):
         if trader is None:
             trader = await resolve_trader(message.guild, content)
         if trader is None:
+            await delete_chat_message(message)
             await redo_halal_userid_prompt(
                 message.channel,
                 ticket,
@@ -11822,12 +11888,14 @@ async def handle_halal_chat(message, ticket):
             )
             return True
         if trader.bot or trader.id == message.author.id:
+            await delete_chat_message(message)
             await redo_halal_userid_prompt(
                 message.channel,
                 ticket,
                 "Please paste the UserID of the user you are dealing with."
             )
             return True
+        await delete_chat_message(message)
         try:
             await add_halal_trader(message.channel, ticket, trader)
         except Exception:
@@ -11850,12 +11918,21 @@ async def handle_halal_chat(message, ticket):
             return await reject()
         ticket["deal_details"] = content[:1000]
         ticket["status"] = "halal_details_confirm"
+        await delete_chat_message(message)
+        await delete_halal_keys(
+            message.channel,
+            ticket,
+            "deal_details",
+            "details_ping"
+        )
         await save_data()
         other = ticket.get("receiver_id")
         confirm = await send_halal_layout(
             message.channel,
             HalalDetailsLayout(ticket),
-            ping=f"<@{other}>"
+            ping=f"<@{other}>",
+            ticket=ticket,
+            ping_key="details_confirm_ping"
         )
         ticket["messages"]["details_confirm"] = confirm.id
         await save_data()
@@ -11867,17 +11944,24 @@ async def handle_halal_chat(message, ticket):
         if not content:
             return await reject()
         amount = parse_positive_decimal(content)
+        await delete_chat_message(message)
         if amount is None:
-            await message.channel.send("Enter a valid USD amount.")
+            await delete_halal_keys(message.channel, ticket, "amount_error")
+            err = await message.channel.send("Enter a valid USD amount.")
+            ticket.setdefault("messages", {})["amount_error"] = err.id
+            await save_data()
             return True
         amount = amount.quantize(Decimal("0.01"))
         if amount < halal_min_usd():
-            await message.channel.send(
+            await delete_halal_keys(message.channel, ticket, "amount_error")
+            err = await message.channel.send(
                 view=halal_text_container(
                     f"{money(halal_min_usd())} USD Minimum",
                     COLOR_HALAL_RED
                 )
             )
+            ticket.setdefault("messages", {})["amount_error"] = err.id
+            await save_data()
             return True
         ticket["usd_amount"] = str(amount)
         ticket["usd_confirmed"] = []
@@ -11886,7 +11970,8 @@ async def handle_halal_chat(message, ticket):
             message.channel,
             ticket,
             "deal_amount",
-            "amount_ping"
+            "amount_ping",
+            "amount_error"
         )
         await save_data()
         confirm = await message.channel.send(view=HalalAmountLayout(ticket))
@@ -11901,13 +11986,24 @@ async def handle_halal_chat(message, ticket):
             return await reject()
         coin = halal_coin(ticket)
         address = content.split()[0]
+        await delete_chat_message(message)
         if not valid_crypto_address(coin, address):
-            await message.channel.send(
+            await delete_halal_keys(message.channel, ticket, "address_error")
+            err = await message.channel.send(
                 f"That does not look like a valid {coin.get('label')} address."
             )
+            ticket.setdefault("messages", {})["address_error"] = err.id
+            await save_data()
             return True
         ticket["receiver_address"] = address
         ticket["status"] = "address_confirmation"
+        await delete_halal_keys(
+            message.channel,
+            ticket,
+            "address_prompt",
+            "address_ping",
+            "address_error"
+        )
         await save_data()
         message_sent = await message.channel.send(
             view=HalalAddressConfirmLayout(ticket),
@@ -12038,7 +12134,9 @@ async def send_halal_address_prompt(channel, ticket):
     message = await send_halal_layout(
         channel,
         view,
-        ping=f"<@{ticket['receiver_id']}>"
+        ping=f"<@{ticket['receiver_id']}>",
+        ticket=ticket,
+        ping_key="address_ping"
     )
     ticket["messages"]["address_prompt"] = message.id
     await save_data()
