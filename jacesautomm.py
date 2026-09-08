@@ -165,6 +165,11 @@ HALAL_LTC_EMOJI = "<:halal_ltc:1546837239512834130>"
 HALAL_SOL_EMOJI = "<:halal_sol:1546837202439503952>"
 HALAL_USDT_EMOJI = "<:halal_usdteth:1546837193790717982>"
 HALAL_USDC_EMOJI = "<:halal_usdceth:1546837185657962516>"
+HALAL_USDT_ERC20_EMOJI = "<:halal_usdteth:1546837193790717982>"
+HALAL_USDC_ERC20_EMOJI = "<:halal_usdceth:1546837185657962516>"
+HALAL_USDT_BEP20_EMOJI = "<:halal_usdtbep:1546837193790717982>"
+HALAL_USDT_SOL_EMOJI = "<:halal_usdtsol:1546837193790717982>"
+HALAL_USDC_SOL_EMOJI = "<:halal_usdcsol:1546837185657962516>"
 
 
 # ===== Emojis ========
@@ -1823,30 +1828,18 @@ def demo_halal_completed_layout(sample, ltc_price):
         if ltc_price and ltc_price > 0
         else Decimal("0.00")
     )
-    txid = str(sample["txid"])
-    link = tx_link(txid, "ltc")
-    short = short_txid(txid)
-    text = (
-        f"{H2} Litecoin Deal Complete\n"
-        f"**Amount**\n`{amount_text}` LTC ({money(usd_value)} USD)\n"
-        f"**Sender** `Anonymous`    **Receiver** `Anonymous`\n"
-        f"**Transaction**\n[{short}]({link}) (View Transaction)"
+    return build_halal_complete_layout(
+        title="Litecoin Deal Complete",
+        amount=amount_text,
+        short="LTC",
+        usd=usd_value,
+        sender="`Anonymous`",
+        receiver="`Anonymous`",
+        txid=str(sample["txid"]),
+        asset="ltc",
+        explorer="BlockCypher",
+        emoji=halal_emoji_or(HALAL_LTC_EMOJI, LTC_EMOJI or "Ł")
     )
-    items = with_optional_thumb(text, HALAL_MASCOT_IMAGE)
-    items.append(
-        discord.ui.ActionRow(
-            discord.ui.Button(
-                label="View on BlockCypher",
-                style=discord.ButtonStyle.secondary,
-                url=link
-            )
-        )
-    )
-    view = discord.ui.LayoutView(timeout=None)
-    view.add_item(
-        discord.ui.Container(*items, accent_colour=COLOR_HALAL_GREEN)
-    )
-    return view
 
 
 async def resolve_demo_channel(channel_id):
@@ -9603,6 +9596,7 @@ def halal_coins():
             "label": "Bitcoin",
             "short": "BTC",
             "panel": "Bitcoin",
+            "complete": "Bitcoin",
             "group": "crypto",
             "family": "utxo",
             "chain": "btc",
@@ -9618,6 +9612,7 @@ def halal_coins():
             "label": "Ethereum",
             "short": "ETH",
             "panel": "Ethereum",
+            "complete": "Ethereum",
             "group": "crypto",
             "family": "eth",
             "chain_id": "1",
@@ -9634,6 +9629,7 @@ def halal_coins():
             "label": "Litecoin",
             "short": "LTC",
             "panel": "Litecoin",
+            "complete": "Litecoin",
             "group": "crypto",
             "family": "utxo",
             "chain": "ltc",
@@ -9649,6 +9645,7 @@ def halal_coins():
             "label": "Solana",
             "short": "SOL",
             "panel": "Solana",
+            "complete": "Solana",
             "group": "crypto",
             "family": "sol",
             "decimals": 9,
@@ -9661,9 +9658,10 @@ def halal_coins():
         },
         "usdt_erc20": {
             "key": "usdt_erc20",
-            "label": "USDT (ERC-20)",
+            "label": "USDT [ERC-20]",
             "short": "USDT",
-            "panel": "USDT (ERC-20)",
+            "panel": "USDT [ERC-20]",
+            "complete": "USDT [ERC-20]",
             "group": "stable",
             "family": "erc20",
             "chain_id": "1",
@@ -9673,14 +9671,15 @@ def halal_coins():
             "price": None,
             "confirmations": 1,
             "explorer": "Etherscan",
-            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "emoji": halal_emoji_or(HALAL_USDT_ERC20_EMOJI, HALAL_USDT_EMOJI or USDT_EMOJI or "₮"),
             "address": cleaned_secret(HALAL_USDT_ERC20_ADDRESS)
         },
         "usdc_erc20": {
             "key": "usdc_erc20",
-            "label": "USDC (ERC-20)",
+            "label": "USDC [ERC-20]",
             "short": "USDC",
-            "panel": "USDC (ERC-20)",
+            "panel": "USDC [ERC-20]",
+            "complete": "USDC [ERC-20]",
             "group": "stable",
             "family": "erc20",
             "chain_id": "1",
@@ -9690,14 +9689,15 @@ def halal_coins():
             "price": None,
             "confirmations": 1,
             "explorer": "Etherscan",
-            "emoji": halal_emoji_or(HALAL_USDC_EMOJI, "USD"),
+            "emoji": halal_emoji_or(HALAL_USDC_ERC20_EMOJI, HALAL_USDC_EMOJI or "USD"),
             "address": cleaned_secret(HALAL_USDC_ERC20_ADDRESS)
         },
         "usdt_bep20": {
             "key": "usdt_bep20",
-            "label": "USDT (BEP-20)",
+            "label": "USDT [BEP-20]",
             "short": "USDT",
-            "panel": "USDT (BEP-20)",
+            "panel": "USDT [BEP-20]",
+            "complete": "USDT [BEP-20]",
             "group": "stable",
             "family": "bep20",
             "chain_id": BSC_CHAIN_ID,
@@ -9706,15 +9706,16 @@ def halal_coins():
             "display_decimals": 4,
             "price": None,
             "confirmations": USDT_CONFIRMATIONS_REQUIRED,
-            "explorer": "BscScan",
-            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "explorer": "Bscscan",
+            "emoji": halal_emoji_or(HALAL_USDT_BEP20_EMOJI, HALAL_USDT_EMOJI or USDT_EMOJI or "₮"),
             "address": cleaned_secret(HALAL_USDT_BEP20_ADDRESS) or USDT_DEPOSIT_ADDRESS
         },
         "usdt_sol": {
             "key": "usdt_sol",
-            "label": "USDT (SOL)",
+            "label": "USDT [SOL]",
             "short": "USDT",
-            "panel": "USDT (SOL)",
+            "panel": "USDT [SOL]",
+            "complete": "USDT [SOL]",
             "group": "stable",
             "family": "spl",
             "mint": USDT_SOL_MINT,
@@ -9723,14 +9724,15 @@ def halal_coins():
             "price": None,
             "confirmations": 1,
             "explorer": "Solscan",
-            "emoji": halal_emoji_or(HALAL_USDT_EMOJI, USDT_EMOJI or "₮"),
+            "emoji": halal_emoji_or(HALAL_USDT_SOL_EMOJI, HALAL_USDT_EMOJI or USDT_EMOJI or "₮"),
             "address": cleaned_secret(HALAL_USDT_SOL_ADDRESS)
         },
         "usdc_sol": {
             "key": "usdc_sol",
-            "label": "USDC (SOL)",
+            "label": "USDC [SOL]",
             "short": "USDC",
-            "panel": "USDC (SOL)",
+            "panel": "USDC [SOL]",
+            "complete": "USDC [SOL]",
             "group": "stable",
             "family": "spl",
             "mint": USDC_SOL_MINT,
@@ -9739,18 +9741,47 @@ def halal_coins():
             "price": None,
             "confirmations": 1,
             "explorer": "Solscan",
-            "emoji": halal_emoji_or(HALAL_USDC_EMOJI, "USD"),
+            "emoji": halal_emoji_or(HALAL_USDC_SOL_EMOJI, HALAL_USDC_EMOJI or "USD"),
             "address": cleaned_secret(HALAL_USDC_SOL_ADDRESS)
         }
     }
 
 
-def halal_coin(ticket_or_key):
+def apply_guild_halal_emojis(coins, guild):
+    if guild is None:
+        return coins
+    by_name = {emoji.name: str(emoji) for emoji in getattr(guild, "emojis", [])}
+    names = {
+        "btc": ("halal_btc",),
+        "eth": ("halal_eth",),
+        "ltc": ("halal_ltc",),
+        "sol": ("halal_sol",),
+        "usdt_erc20": ("halal_usdteth", "halal_usdt_erc20"),
+        "usdc_erc20": ("halal_usdceth", "halal_usdc_erc20"),
+        "usdt_bep20": ("halal_usdtbep", "halal_usdt_bep20", "halal_usdtbnb"),
+        "usdt_sol": ("halal_usdtsol", "halal_usdt_sol"),
+        "usdc_sol": ("halal_usdcsol", "halal_usdc_sol"),
+    }
+    for key, options in names.items():
+        coin = coins.get(key)
+        if not coin:
+            continue
+        for name in options:
+            if name in by_name:
+                coin["emoji"] = by_name[name]
+                break
+    return coins
+
+
+def halal_coin(ticket_or_key, guild=None):
     if isinstance(ticket_or_key, dict):
         key = ticket_or_key.get("type")
+        if guild is None and ticket_or_key.get("guild_id"):
+            guild = bot.get_guild(int(ticket_or_key["guild_id"]))
     else:
         key = ticket_or_key
-    return halal_coins().get(str(key or ""), {})
+    coins = apply_guild_halal_emojis(halal_coins(), guild)
+    return coins.get(str(key or ""), {})
 
 
 def is_halal_ticket(ticket):
@@ -9924,6 +9955,91 @@ def with_optional_thumb(text, image_url, fallback_url=None):
     return [discord.ui.Section(body, accessory=thumb)]
 
 
+def custom_emoji_cdn_url(emoji):
+    match = re.fullmatch(r"<(a?):[A-Za-z0-9_]+:(\d+)>", str(emoji or "").strip())
+    if not match:
+        return ""
+    ext = "gif" if match.group(1) == "a" else "png"
+    return (
+        f"https://cdn.discordapp.com/emojis/{match.group(2)}.{ext}"
+        "?size=128&quality=lossless"
+    )
+
+
+def halal_privacy_name(user_id, private=True):
+    if private or not user_id:
+        return "`Anonymous`"
+    return f"<@{int(user_id)}>"
+
+
+def halal_complete_title(coin):
+    name = coin.get("complete") or coin.get("label") or "Deal"
+    return f"{name} Deal Complete"
+
+
+def build_halal_complete_layout(
+    title,
+    amount,
+    short,
+    usd,
+    sender,
+    receiver,
+    txid,
+    asset,
+    explorer,
+    emoji=""
+):
+    link = tx_link(txid, asset) if txid else ""
+    short_tx = short_txid(txid) if txid else ""
+    real_tx = bool(
+        txid
+        and link
+        and not is_manual_reference(txid)
+        and not is_simulation_reference(txid)
+    )
+    tx_md = (
+        f"[{short_tx} (View Transaction)]({link})"
+        if real_tx
+        else f"`{short_tx or 'Manual'}`"
+    )
+    thumb = halal_thumb(custom_emoji_cdn_url(emoji))
+    if thumb is None and emoji:
+        heading = f"{H2} {emoji} {title}"
+    else:
+        heading = f"{H2} {title}"
+    body = (
+        f"**Amount**\n`{amount}` {short} ({money(usd)} USD)\n"
+        f"**Sender** {sender}    **Receiver** {receiver}\n"
+        f"**Transaction**\n{tx_md}"
+    )
+    items = []
+    if thumb is None:
+        items.append(discord.ui.TextDisplay(f"{heading}\n{body}"))
+    else:
+        items.append(
+            discord.ui.Section(
+                discord.ui.TextDisplay(heading),
+                accessory=thumb
+            )
+        )
+        items.append(discord.ui.TextDisplay(body))
+    if real_tx:
+        items.append(
+            discord.ui.ActionRow(
+                discord.ui.Button(
+                    label=f"View on {explorer}",
+                    style=discord.ButtonStyle.secondary,
+                    url=link
+                )
+            )
+        )
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(
+        discord.ui.Container(*items, accent_colour=COLOR_HALAL_GREEN)
+    )
+    return view
+
+
 class HalalStartButton(discord.ui.Button):
     def __init__(self, coin_key):
         super().__init__(
@@ -9939,8 +10055,8 @@ class HalalStartButton(discord.ui.Button):
 
 class HalalPanel(discord.ui.LayoutView):
     @staticmethod
-    def coin_groups():
-        coins = halal_coins()
+    def coin_groups(guild=None):
+        coins = apply_guild_halal_emojis(halal_coins(), guild)
         tos = halal_md_link("Terms of Service", HALAL_TOS_URL)
         website = halal_md_link("website", HALAL_WEBSITE_URL)
         crypto_items = [
@@ -9992,8 +10108,8 @@ class HalalPanel(discord.ui.LayoutView):
         return crypto_items, stable_items
 
     @classmethod
-    def split_views(cls):
-        crypto_items, stable_items = cls.coin_groups()
+    def split_views(cls, guild=None):
+        crypto_items, stable_items = cls.coin_groups(guild)
         crypto = discord.ui.LayoutView(timeout=None)
         stables = discord.ui.LayoutView(timeout=None)
         crypto.add_item(
@@ -10055,7 +10171,7 @@ class HalalCloseView(discord.ui.View):
 
 
 class HalalDealTypeSelect(discord.ui.Select):
-    def __init__(self, selected=None):
+    def __init__(self, selected=None, locked=False):
         options = []
         for key, label, _prompt, _example in HALAL_DEAL_TYPES:
             options.append(
@@ -10070,7 +10186,8 @@ class HalalDealTypeSelect(discord.ui.Select):
             min_values=1,
             max_values=1,
             options=options,
-            custom_id="halal_deal_type"
+            custom_id="halal_deal_type",
+            disabled=bool(locked)
         )
 
     async def callback(self, interaction):
@@ -10087,20 +10204,15 @@ class HalalDealTypeSelect(discord.ui.Select):
                 ephemeral=True
             )
             return
-        if ticket.get("deal_type") and ticket.get("status") not in {
-            "halal_setup",
-            "halal_waiting_trader",
-            "halal_waiting_roles"
-        }:
-            await interaction.response.send_message(
-                "The deal type can no longer be changed.",
-                ephemeral=True
+        if ticket.get("deal_type"):
+            await interaction.response.edit_message(
+                view=HalalDealTypeLayout(ticket, locked=True)
             )
+            await send_halal_lets_start(interaction.channel, ticket)
             return
         if ticket.get("status") not in {
             "halal_setup",
-            "halal_waiting_trader",
-            "halal_waiting_roles"
+            "halal_waiting_trader"
         }:
             await interaction.response.send_message(
                 "The deal type can no longer be changed.",
@@ -10108,15 +10220,21 @@ class HalalDealTypeSelect(discord.ui.Select):
             )
             return
         ticket["deal_type"] = self.values[0]
+        if not ticket.get("trader_id"):
+            ticket["status"] = "halal_waiting_trader"
         await save_data()
-        await interaction.response.edit_message(view=HalalDealTypeLayout(ticket))
+        await interaction.response.edit_message(
+            view=HalalDealTypeLayout(ticket, locked=True)
+        )
+        await send_halal_lets_start(interaction.channel, ticket)
         await maybe_start_halal_roles(interaction.channel, ticket)
 
 
 class HalalDealTypeLayout(discord.ui.LayoutView):
-    def __init__(self, ticket=None):
+    def __init__(self, ticket=None, locked=False):
         super().__init__(timeout=None)
         selected = ticket.get("deal_type") if ticket else None
+        locked = bool(locked or selected)
         self.add_item(
             discord.ui.Container(
                 discord.ui.TextDisplay(f"{H2} Deal Type"),
@@ -10127,7 +10245,9 @@ class HalalDealTypeLayout(discord.ui.LayoutView):
                     visible=True,
                     spacing=discord.SeparatorSpacing.small
                 ),
-                discord.ui.ActionRow(HalalDealTypeSelect(selected)),
+                discord.ui.ActionRow(
+                    HalalDealTypeSelect(selected, locked=locked)
+                ),
                 accent_colour=COLOR_HALAL_GREEN
             )
         )
@@ -10148,6 +10268,14 @@ class HalalLetsStartLayout(discord.ui.LayoutView):
                 accent_colour=COLOR_HALAL_GREEN
             )
         )
+
+
+async def send_halal_lets_start(channel, ticket):
+    if ticket.get("messages", {}).get("trader_prompt"):
+        return
+    message = await channel.send(view=HalalLetsStartLayout())
+    ticket.setdefault("messages", {})["trader_prompt"] = message.id
+    await save_data()
 
 
 class HalalSelectRoleButton(discord.ui.Button):
@@ -10542,7 +10670,10 @@ class HalalInvoiceLayout(discord.ui.LayoutView):
         buttons.extend([HalalCancelDealButton(), HalalCheckDepositButton()])
         self.add_item(
             discord.ui.Container(
-                *with_optional_thumb(summary_text, HALAL_MASCOT_IMAGE),
+                *with_optional_thumb(
+                    summary_text,
+                    custom_emoji_cdn_url(coin.get("emoji"))
+                ),
                 accent_colour=COLOR_HALAL_GRAY
             )
         )
@@ -10914,45 +11045,26 @@ class HalalStatsLayout(discord.ui.LayoutView):
         )
 
 
-class HalalCompletedLogLayout(discord.ui.LayoutView):
-    def __init__(self, ticket):
-        super().__init__(timeout=None)
-        coin = halal_coin(ticket)
-        amount = halal_amount_text(
-            ticket,
-            ticket.get("payout_amount") or ticket.get("deposit_amount")
-        )
-        sender_private = DATA["privacy"].get(str(ticket.get("sender_id")), True)
-        receiver_private = DATA["privacy"].get(str(ticket.get("receiver_id")), True)
-        sender_text = "`Anonymous`" if sender_private else f"<@{ticket['sender_id']}>"
-        receiver_text = "`Anonymous`" if receiver_private else f"<@{ticket['receiver_id']}>"
-        txid = ticket.get("payout_txid") or ""
-        explorer = explorer_name_for(ticket)
-        link = tx_link(txid, ticket.get("type"))
-        short = short_txid(txid)
-        items = with_optional_thumb(
-            (
-                f"{H2} {coin.get('label')} Deal Complete\n"
-                f"**Amount**\n`{amount}` {coin.get('short')} "
-                f"({money(ticket.get('usd_amount') or '0')} USD)\n"
-                f"**Sender** {sender_text}    **Receiver** {receiver_text}\n"
-                f"**Transaction**\n[{short}]({link}) (View Transaction)"
-            ),
-            HALAL_MASCOT_IMAGE
-        )
-        if txid and not is_manual_reference(txid) and not is_simulation_reference(txid):
-            items.append(
-                discord.ui.ActionRow(
-                    discord.ui.Button(
-                        label=f"View on {explorer}",
-                        style=discord.ButtonStyle.secondary,
-                        url=link
-                    )
-                )
-            )
-        self.add_item(
-            discord.ui.Container(*items, accent_colour=COLOR_HALAL_GREEN)
-        )
+def HalalCompletedLogLayout(ticket):
+    coin = halal_coin(ticket)
+    amount = halal_amount_text(
+        ticket,
+        ticket.get("payout_amount") or ticket.get("deposit_amount")
+    )
+    sender_private = DATA["privacy"].get(str(ticket.get("sender_id")), True)
+    receiver_private = DATA["privacy"].get(str(ticket.get("receiver_id")), True)
+    return build_halal_complete_layout(
+        title=halal_complete_title(coin),
+        amount=amount,
+        short=coin.get("short") or "",
+        usd=ticket.get("usd_amount") or "0",
+        sender=halal_privacy_name(ticket.get("sender_id"), sender_private),
+        receiver=halal_privacy_name(ticket.get("receiver_id"), receiver_private),
+        txid=ticket.get("payout_txid") or "",
+        asset=ticket.get("type"),
+        explorer=explorer_name_for(ticket),
+        emoji=coin.get("emoji") or ""
+    )
 
 
 def detected_layout(ticket):
@@ -10986,7 +11098,7 @@ def detected_layout(ticket):
         f"({money(ticket.get('usd_amount') or '0')})"
     )
     return TinyLayout(
-        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
         accent=COLOR_HALAL_ORANGE
     )
 
@@ -11016,7 +11128,7 @@ def received_layout(ticket):
         f"({money(ticket.get('usd_amount') or '0')})"
     )
     return TinyLayout(
-        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
         accent=COLOR_HALAL_GREEN
     )
 
@@ -11037,13 +11149,13 @@ def released_layout(ticket):
         f"**Transaction**\n[{short_txid(txid)}]({link})"
     )
     return TinyLayout(
-        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        *with_optional_thumb(text, custom_emoji_cdn_url(coin.get("emoji"))),
         accent=COLOR_HALAL_GREEN
     )
 
 
 async def start_halal_ticket(interaction, coin_key):
-    coin = halal_coin(coin_key)
+    coin = halal_coin(coin_key, interaction.guild)
     if not coin:
         await interaction.response.send_message(
             "That coin is not available.",
@@ -11139,10 +11251,12 @@ async def start_halal_ticket(interaction, coin_key):
     await save_data()
 
     website = halal_md_link("website", HALAL_WEBSITE_URL)
+    coin_emoji = coin.get("emoji") or ""
+    started = f"{coin_emoji} Deal Started" if coin_emoji else "Deal Started"
     welcome = TinyLayout(
         *with_optional_thumb(
             (
-                f"{H2} Deal Started\n"
+                f"{H2} {started}\n"
                 "Welcome to our automated cryptocurrency Middleman system! "
                 "Your cryptocurrency will be stored securely for the duration of this deal. "
                 f"Please notify support or check our {website} for assistance."
@@ -11166,8 +11280,6 @@ async def start_halal_ticket(interaction, coin_key):
     await channel.send(view=HalalCloseView())
     type_message = await channel.send(view=HalalDealTypeLayout(ticket))
     ticket["messages"]["deal_type"] = type_message.id
-    trader_prompt = await channel.send(view=HalalLetsStartLayout())
-    ticket["messages"]["trader_prompt"] = trader_prompt.id
     await save_data()
     log_action(
         "halal_ticket_created",
@@ -11532,6 +11644,8 @@ async def handle_halal_chat(message, ticket):
         return True
 
     if status in {"halal_setup", "halal_waiting_trader"} and not ticket.get("trader_id"):
+        if not ticket.get("deal_type"):
+            return await reject()
         if int(message.author.id) != int(ticket.get("opener_id") or 0):
             return await reject()
         if not content:
@@ -13697,10 +13811,10 @@ async def halalpanel(
 
     try:
         await interaction.channel.send(
-            view=HalalPanel()
+            view=HalalPanel(interaction.guild)
         )
     except ValueError:
-        crypto, stables = HalalPanel.split_views()
+        crypto, stables = HalalPanel.split_views(interaction.guild)
         await interaction.channel.send(view=crypto)
         await interaction.channel.send(view=stables)
     except discord.HTTPException:
