@@ -10033,7 +10033,7 @@ def build_halal_complete_layout(
     emoji=""
 ):
     link = tx_link(txid, asset) if txid else ""
-    short_tx = short_txid(txid) if txid else ""
+    short_tx = halal_short_txid(txid) if txid else ""
     real_tx = bool(
         txid
         and link
@@ -12924,9 +12924,11 @@ async def apply_profile_presence(profile):
     changed = False
     state = presence_state()
 
+    noted_presence = False
     if status in PRESENCE_STATUSES:
         state["status"] = status
         changed = True
+        noted_presence = True
 
     if activity_text:
         if activity_type not in PRESENCE_ACTIVITY_TYPES:
@@ -12934,19 +12936,27 @@ async def apply_profile_presence(profile):
         state["type"] = activity_type
         state["text"] = activity_text
         changed = True
+        noted_presence = True
+    elif state.get("text"):
+        state["text"] = ""
+        changed = True
 
     if changed:
         await save_data()
         try:
             await apply_bot_presence()
-            notes.append("bot activity updated")
+            if noted_presence:
+                notes.append("bot activity updated")
         except discord.HTTPException as error:
-            notes.append(f"bot activity failed: {error}")
+            if noted_presence:
+                notes.append(f"bot activity failed: {error}")
 
     if bio:
         note = await apply_bot_bio(bio)
         if note:
             notes.append(note)
+    else:
+        await apply_bot_bio("", clear_if_empty=True)
 
     return notes
 
@@ -13257,6 +13267,11 @@ async def apply_branding_profile(guild, profile, reason):
                 lambda: guild.edit(description=description, reason=reason)
             )
         )
+    elif getattr(guild, "description", None):
+        try:
+            await guild.edit(description="", reason=reason)
+        except (TypeError, discord.HTTPException):
+            pass
 
     if icon_bytes:
         notes.append(
@@ -13302,6 +13317,11 @@ async def apply_branding_profile(guild, profile, reason):
                     lambda: bot.user.edit(banner=banner_user_bytes)
                 )
             )
+        elif not str(profile.get("bot_banner") or "").strip():
+            try:
+                await bot.user.edit(banner=None)
+            except (TypeError, discord.HTTPException):
+                pass
 
     role_name = str(profile.get("bot_role_name") or "").strip()
     if role_name:
@@ -13484,6 +13504,8 @@ async def execute_guild_mode(guild, mode):
     state["active"] = active
     state["mode"] = mode
     await save_data()
+
+    branding_notes = [note for note in (branding_notes or []) if note]
 
     lines = [
         f"{emoji_text(GREEN_TICK_EMOJI)}Shown ({shown_label}): **{results['shown']}**",
