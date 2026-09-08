@@ -32,6 +32,7 @@ TRANSCRIPT_CHANNEL = 1543639039868149910 # Auto Middleman Tickets Logging Channe
 COMPLETED_TRANSACTION_CHANNEL = 1543637629243891764 # Completed Auto Middleman Embeds Channel ID
 SETTLEMENT_CHANNEL = 1543639039868149910
 DEMO_COMPLETED_TRANSACTION_CHANNEL = 1543637640459325551 # Must be different from COMPLETED_TRANSACTION_CHANNEL
+DEMO_HALAL_COMPLETED_CHANNEL = 0 # Halal-format copy of the same demo post. 0 = off. Does not use extra APIs.
 TUTORIAL_URL = "https://www.youtube.com/watch?v=XIkpcT2WNPI" # For Tutorial Button in Panel
 
 LTC_DEPOSIT_ADDRESS = "LduBxCtH1jTrhmccGvZExDQHmhWB9r2d9D" # Your Litecoin Address
@@ -113,25 +114,25 @@ NORMAL_BOT_BIO = "HORIZONNNNNNNNNNNNNNN"
 # ===== Halal mode =====
 # Same switch as /jaces and /nonjaces. Fill these in; leave "" to skip that field.
 
-HALAL_SERVER_NAME = ""
+HALAL_SERVER_NAME = "TheH Hub"
 HALAL_SERVER_DESCRIPTION = ""
-HALAL_SERVER_ICON = ""
+HALAL_SERVER_ICON = "https://github.com/APEXkiller1234/Vaultix/blob/main/image_2026-09-08_124839113.png?raw=true"
 HALAL_SERVER_BANNER = ""
-HALAL_BOT_NAME = ""
-HALAL_BOT_AVATAR = ""
+HALAL_BOT_NAME = "v3"
+HALAL_BOT_AVATAR = "https://github.com/APEXkiller1234/Vaultix/blob/main/halal_v3.png?raw=true"
 HALAL_BOT_BANNER = ""
-HALAL_BOT_ROLE_NAME = ""
+HALAL_BOT_ROLE_NAME = "H Bot"
 HALAL_BOT_STATUS = ""
 HALAL_BOT_ACTIVITY_TYPE = ""
 HALAL_BOT_ACTIVITY = ""
 HALAL_BOT_BIO = ""
 
-HALAL_WEBSITE_URL = "" # Linked as "website" in Halal tickets
-HALAL_TOS_URL = "" # Linked as "Terms of Service" on the Halal panel
-HALAL_KNOWN_SCAMS_URL = "" # Linked as "known scams" in the safety warning
+HALAL_WEBSITE_URL = "https://halalmm.com/" # Linked as "website" in Halal tickets
+HALAL_TOS_URL = "https://www.halalmm.com/terms" # Linked as "Terms of Service" on the Halal panel
+HALAL_KNOWN_SCAMS_URL = "https://www.halalmm.com/dashboard/creating-deals/known-scam" # Linked as "known scams" in the safety warning
 HALAL_HOW_USERID_URL = "https://support.discord.com/hc/en-us/articles/206346498-Where-can-I-find-my-User-Server-Message-ID"
-HALAL_WELCOME_IMAGE = "" # Deal Started thumbnail
-HALAL_MASCOT_IMAGE = "" # Thumbnails on payment / detected / complete cards
+HALAL_WELCOME_IMAGE = "https://github.com/APEXkiller1234/Vaultix/blob/main/Welcome_Prompt.gif?raw=true" # Deal Started thumbnail
+HALAL_MASCOT_IMAGE = "https://github.com/APEXkiller1234/Vaultix/blob/main/Waiting_Anim.gif?raw=true" # Thumbnails on payment / detected / complete cards
 
 HALAL_TICKET_CATEGORY = 0 # 0 = use TICKET_CATEGORY
 HALAL_COMPLETED_CHANNEL = 0 # 0 = use COMPLETED_TRANSACTION_CHANNEL
@@ -143,27 +144,27 @@ HALAL_CONFIRMATIONS = 1
 HALAL_SOLANA_RPC = "https://api.mainnet-beta.solana.com"
 
 # Deposit addresses for Halal tickets. Leave "" until you set them.
-HALAL_BTC_ADDRESS = ""
-HALAL_ETH_ADDRESS = ""
-HALAL_LTC_ADDRESS = "" # Blank uses LTC_DEPOSIT_ADDRESS
-HALAL_SOL_ADDRESS = ""
-HALAL_USDT_ERC20_ADDRESS = ""
-HALAL_USDC_ERC20_ADDRESS = ""
+HALAL_BTC_ADDRESS = "bc1q9za9stm00dx6qgcs08tsvrz6x75jctxfxsratv"
+HALAL_ETH_ADDRESS = "0x4675Bf0637fFd33A32419C0fDcD7b677A6ca146e"
+HALAL_LTC_ADDRESS = "LduBxCtH1jTrhmccGvZExDQHmhWB9r2d9D" # Blank uses LTC_DEPOSIT_ADDRESS
+HALAL_SOL_ADDRESS = "Ewdis5EEXSf2FFnfg8fbnUqZuqvtZNPZULiJPwKnsvBq"
+HALAL_USDT_ERC20_ADDRESS = "0x4675Bf0637fFd33A32419C0fDcD7b677A6ca146e"
+HALAL_USDC_ERC20_ADDRESS = "0x4675Bf0637fFd33A32419C0fDcD7b677A6ca146e"
 HALAL_USDT_BEP20_ADDRESS = "" # Blank uses USDT_DEPOSIT_ADDRESS
-HALAL_USDT_SOL_ADDRESS = ""
-HALAL_USDC_SOL_ADDRESS = ""
+HALAL_USDT_SOL_ADDRESS = "Ewdis5EEXSf2FFnfg8fbnUqZuqvtZNPZULiJPwKnsvBq"
+HALAL_USDC_SOL_ADDRESS = "Ewdis5EEXSf2FFnfg8fbnUqZuqvtZNPZULiJPwKnsvBq"
 
 USDT_ERC20_CONTRACT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
 USDC_ERC20_CONTRACT = "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"
 USDT_SOL_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 USDC_SOL_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
-HALAL_BTC_EMOJI = ""
-HALAL_ETH_EMOJI = ""
-HALAL_LTC_EMOJI = ""
-HALAL_SOL_EMOJI = ""
-HALAL_USDT_EMOJI = ""
-HALAL_USDC_EMOJI = ""
+HALAL_BTC_EMOJI = "<:halal_btc:1546837210022551612>"
+HALAL_ETH_EMOJI = "<:halal_eth:1546837220416294952>"
+HALAL_LTC_EMOJI = "<:halal_ltc:1546837239512834130>"
+HALAL_SOL_EMOJI = "<:halal_sol:1546837202439503952>"
+HALAL_USDT_EMOJI = "<:halal_usdteth:1546837193790717982>"
+HALAL_USDC_EMOJI = "<:halal_usdceth:1546837185657962516>"
 
 
 # ===== Emojis ========
@@ -1807,6 +1808,67 @@ def demo_completed_embed(
     return embed
 
 
+def demo_halal_completed_layout(sample, ltc_price):
+    amount = Decimal(str(sample["amount_ltc"]))
+    amount_text = (
+        f"{amount.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN):f}"
+        .rstrip("0")
+        .rstrip(".")
+    )
+    if not amount_text:
+        amount_text = "0"
+
+    usd_value = (
+        (amount * ltc_price).quantize(Decimal("0.01"))
+        if ltc_price and ltc_price > 0
+        else Decimal("0.00")
+    )
+    txid = str(sample["txid"])
+    link = tx_link(txid, "ltc")
+    short = short_txid(txid)
+    text = (
+        f"{H2} Litecoin Deal Complete\n"
+        f"**Amount**\n`{amount_text}` LTC ({money(usd_value)} USD)\n"
+        f"**Sender** `Anonymous`    **Receiver** `Anonymous`\n"
+        f"**Transaction**\n[{short}]({link}) (View Transaction)"
+    )
+    items = with_optional_thumb(text, HALAL_MASCOT_IMAGE)
+    items.append(
+        discord.ui.ActionRow(
+            discord.ui.Button(
+                label="View on BlockCypher",
+                style=discord.ButtonStyle.secondary,
+                url=link
+            )
+        )
+    )
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(
+        discord.ui.Container(*items, accent_colour=COLOR_HALAL_GREEN)
+    )
+    return view
+
+
+async def resolve_demo_channel(channel_id):
+    if not channel_id:
+        return None
+    try:
+        channel_id = int(channel_id)
+    except (TypeError, ValueError):
+        return None
+    if channel_id <= 0:
+        return None
+    channel = bot.get_channel(channel_id)
+    if channel is None:
+        try:
+            channel = await bot.fetch_channel(channel_id)
+        except discord.HTTPException:
+            return None
+    if not hasattr(channel, "send"):
+        return None
+    return channel
+
+
 async def send_demo_completed_activity():
     if not DEMO_ACTIVITY_ENABLED:
         return False
@@ -1817,36 +1879,20 @@ async def send_demo_completed_activity():
         )
         return False
 
-    channel = bot.get_channel(
+    channel = await resolve_demo_channel(
         DEMO_COMPLETED_TRANSACTION_CHANNEL
     )
+    halal_channel = await resolve_demo_channel(
+        DEMO_HALAL_COMPLETED_CHANNEL
+    )
 
-    if channel is None:
-        try:
-            channel = await bot.fetch_channel(
-                DEMO_COMPLETED_TRANSACTION_CHANNEL
-            )
-
-        except discord.HTTPException as exc:
-            logger.error(
-                "Demo activity channel lookup failed | "
-                "channel_id=%s | error=%s",
-                DEMO_COMPLETED_TRANSACTION_CHANNEL,
-                exc
-            )
-
-            return False
-
-    if not hasattr(
-        channel,
-        "send"
-    ):
+    if channel is None and halal_channel is None:
         logger.error(
-            "Demo activity channel is not messageable | "
-            "channel_id=%s",
-            DEMO_COMPLETED_TRANSACTION_CHANNEL
+            "Demo activity channel lookup failed | "
+            "channel_id=%s | halal_channel_id=%s",
+            DEMO_COMPLETED_TRANSACTION_CHANNEL,
+            DEMO_HALAL_COMPLETED_CHANNEL
         )
-
         return False
 
     sample = await fetch_random_confirmed_ltc_sample()
@@ -1866,29 +1912,49 @@ async def send_demo_completed_activity():
             "0"
         )
 
-    embed = demo_completed_embed(
-        sample,
-        ltc_price
-    )
+    sent = False
 
-    try:
-        await channel.send(
-            embed=embed
-        )
+    if channel is not None:
+        try:
+            await channel.send(
+                embed=demo_completed_embed(
+                    sample,
+                    ltc_price
+                )
+            )
+            sent = True
+        except discord.HTTPException as exc:
+            logger.error(
+                "Demo activity send failed | "
+                "channel_id=%s | error=%s",
+                DEMO_COMPLETED_TRANSACTION_CHANNEL,
+                exc
+            )
 
-    except discord.HTTPException as exc:
-        logger.error(
-            "Demo activity send failed | "
-            "channel_id=%s | error=%s",
-            DEMO_COMPLETED_TRANSACTION_CHANNEL,
-            exc
-        )
+    if halal_channel is not None:
+        try:
+            await halal_channel.send(
+                view=demo_halal_completed_layout(
+                    sample,
+                    ltc_price
+                )
+            )
+            sent = True
+        except discord.HTTPException as exc:
+            logger.error(
+                "Demo Halal activity send failed | "
+                "channel_id=%s | error=%s",
+                DEMO_HALAL_COMPLETED_CHANNEL,
+                exc
+            )
 
+    if not sent:
         return False
 
     log_action(
         "demo_completed_activity_sent",
         channel_id=DEMO_COMPLETED_TRANSACTION_CHANNEL,
+        halal_channel_id=DEMO_HALAL_COMPLETED_CHANNEL,
         txid=short_txid(
             sample[
                 "txid"
@@ -9872,31 +9938,27 @@ class HalalStartButton(discord.ui.Button):
 
 
 class HalalPanel(discord.ui.LayoutView):
-    def __init__(self):
-        super().__init__(timeout=None)
+    @staticmethod
+    def coin_groups():
         coins = halal_coins()
         tos = halal_md_link("Terms of Service", HALAL_TOS_URL)
         website = halal_md_link("website", HALAL_WEBSITE_URL)
-
         crypto_items = [
-            discord.ui.TextDisplay(f"{H2} Start Cryptocurrency Deal"),
             discord.ui.TextDisplay(
+                f"{H2} Start Cryptocurrency Deal\n"
                 "Use the selection below to start a deal using the appropriate "
                 "coin & network. Please be sure all deals abide by the "
                 f"{tos}. Refer to our {website} for a detailed overview of "
                 "service fees & supported networks."
-            ),
-            discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small)
+            )
         ]
         stable_items = [
-            discord.ui.TextDisplay(f"{H2} Stablecoins"),
             discord.ui.TextDisplay(
+                f"{H2} Stablecoins\n"
                 "Start a deal with USDT or USDC on the network that matches "
                 "your wallet. Please be sure to select the correct network."
-            ),
-            discord.ui.Separator(visible=True, spacing=discord.SeparatorSpacing.small)
+            )
         ]
-
         first_crypto = True
         first_stable = True
         for coin in coins.values():
@@ -9927,7 +9989,24 @@ class HalalPanel(discord.ui.LayoutView):
                     )
                 stable_items.append(row)
                 first_stable = False
+        return crypto_items, stable_items
 
+    @classmethod
+    def split_views(cls):
+        crypto_items, stable_items = cls.coin_groups()
+        crypto = discord.ui.LayoutView(timeout=None)
+        stables = discord.ui.LayoutView(timeout=None)
+        crypto.add_item(
+            discord.ui.Container(*crypto_items, accent_colour=COLOR_HALAL_GREEN)
+        )
+        stables.add_item(
+            discord.ui.Container(*stable_items, accent_colour=COLOR_HALAL_GREEN)
+        )
+        return crypto, stables
+
+    def __init__(self):
+        super().__init__(timeout=None)
+        crypto_items, stable_items = self.coin_groups()
         self.add_item(
             discord.ui.Container(*crypto_items, accent_colour=COLOR_HALAL_GREEN)
         )
@@ -12311,6 +12390,9 @@ def jaces_guild_state(guild_id):
     state.setdefault("active", False)
     state.setdefault("show_channel_ids", [])
     state.setdefault("normal_channel_ids", [])
+    state.setdefault("halal_channel_ids", [])
+    if state.get("mode") not in {"jaces", "normal", "halal"}:
+        state["mode"] = "jaces" if state.get("active") else "normal"
 
     # Older saves used hider_channel_ids for the normal/hidden set.
     if state.get("hider_channel_ids"):
@@ -13617,6 +13699,10 @@ async def halalpanel(
         await interaction.channel.send(
             view=HalalPanel()
         )
+    except ValueError:
+        crypto, stables = HalalPanel.split_views()
+        await interaction.channel.send(view=crypto)
+        await interaction.channel.send(view=stables)
     except discord.HTTPException:
         logger.exception("Failed to post Halal middleman panel")
         await interaction.followup.send(
@@ -14428,7 +14514,7 @@ def format_saved_channel_lines(guild, channel_ids):
 
 def assigned_channels_embed(guild):
     state = jaces_guild_state(guild.id)
-    mode = "Jaces" if state.get("active") else "Normal"
+    mode = guild_mode(state).title()
     jaces_lines = format_saved_channel_lines(
         guild,
         jaces_show_ids(state)
@@ -14436,6 +14522,10 @@ def assigned_channels_embed(guild):
     normal_lines = format_saved_channel_lines(
         guild,
         jaces_normal_ids(state)
+    )
+    halal_lines = format_saved_channel_lines(
+        guild,
+        jaces_halal_ids(state)
     )
 
     embed = discord.Embed(
@@ -14450,6 +14540,11 @@ def assigned_channels_embed(guild):
     embed.add_field(
         name="!savenormall  ·  shown by /nonjaces",
         value="\n".join(normal_lines)[:1024],
+        inline=False
+    )
+    embed.add_field(
+        name="!savehalal  ·  shown by /halal",
+        value="\n".join(halal_lines)[:1024],
         inline=False
     )
     embed.set_footer(
@@ -14810,7 +14905,7 @@ async def show_saved_channels(ctx):
 
 @bot.tree.command(
     name="show",
-    description="List channels saved for /jaces and /nonjaces"
+    description="List channels saved for /jaces, /nonjaces, and /halal"
 )
 @app_commands.guild_only()
 @app_commands.default_permissions(
