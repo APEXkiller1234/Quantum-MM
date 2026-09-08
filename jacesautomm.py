@@ -10308,27 +10308,70 @@ class HalalLetsStartLayout(discord.ui.LayoutView):
 async def send_halal_lets_start(channel, ticket, force=False):
     if ticket.get("messages", {}).get("trader_prompt") and not force:
         return
+    if force:
+        await delete_halal_keys(channel, ticket, "trader_prompt")
     message = await channel.send(view=HalalLetsStartLayout())
     ticket.setdefault("messages", {})["trader_prompt"] = message.id
     await save_data()
 
 
-async def send_halal_layout(channel, view, ping=None):
+async def send_halal_layout(channel, view, ping=None, ticket=None, ping_key=None):
     if ping:
         try:
-            await channel.send(
+            ping_msg = await channel.send(
                 content=ping,
                 allowed_mentions=discord.AllowedMentions(
                     users=True, roles=False, everyone=False
                 )
             )
+            if ticket is not None and ping_key:
+                ticket.setdefault("messages", {})[ping_key] = ping_msg.id
         except discord.HTTPException:
             logger.exception("Failed to send Halal ping")
     return await channel.send(view=view)
 
 
+async def ack_halal_interaction(interaction):
+    try:
+        if not interaction.response.is_done():
+            await interaction.response.defer()
+    except discord.HTTPException:
+        pass
+
+
+async def delete_ticket_message(channel, message_id):
+    if not message_id or channel is None:
+        return
+    message = await fetch_message(channel, message_id)
+    if message is None:
+        return
+    try:
+        await message.delete()
+    except discord.HTTPException:
+        pass
+
+
+async def delete_halal_keys(channel, ticket, *keys):
+    messages = ticket.setdefault("messages", {})
+    for key in keys:
+        await delete_ticket_message(channel, messages.get(key))
+        messages.pop(key, None)
+
+
+async def consume_halal_prompt(interaction, ticket, *keys):
+    await ack_halal_interaction(interaction)
+    try:
+        await interaction.message.delete()
+    except discord.HTTPException:
+        pass
+    if ticket is not None:
+        await delete_halal_keys(interaction.channel, ticket, *keys)
+        await save_data()
+
+
 async def redo_halal_userid_prompt(channel, ticket, error_text):
-    await channel.send(error_text)
+    err = await channel.send(error_text)
+    ticket.setdefault("messages", {})["userid_error"] = err.id
     await send_halal_lets_start(channel, ticket, force=True)
 
 
@@ -10447,7 +10490,11 @@ class HalalReturnButton(discord.ui.Button):
                 "Only the two traders can use this."
             )
             return
-        await interaction.response.edit_message(view=None)
+        await consume_halal_prompt(
+            interaction,
+            ticket,
+            "role_confirmation"
+        )
         await send_halal_role_selection(interaction.channel, ticket)
 
 
@@ -10897,7 +10944,7 @@ class HalalReleaseConfirmButton(discord.ui.Button):
         ticket["release_authorized"] = True
         ticket["status"] = "address_prompt"
         await save_data()
-        await interaction.response.edit_message(view=None)
+        await ack_halal_interaction(interaction)
         await update_halal_proceed_released(interaction.channel, ticket)
         await send_halal_address_prompt(interaction.channel, ticket)
 
@@ -10920,7 +10967,7 @@ class HalalReleaseBackButton(discord.ui.Button):
             return
         ticket["status"] = "trade"
         await save_data()
-        await interaction.response.edit_message(view=None)
+        await ack_halal_interaction(interaction)
 
 
 class HalalReleaseLayout(discord.ui.LayoutView):
@@ -10973,7 +11020,7 @@ class HalalAddressConfirmButton(discord.ui.Button):
                 ephemeral=True
             )
             return
-        await interaction.response.edit_message(view=None)
+        await ack_halal_interaction(interaction)
         await finish_halal_address_confirm(interaction.channel, ticket)
 
 
@@ -10996,7 +11043,7 @@ class HalalAddressBackButton(discord.ui.Button):
         ticket["receiver_address"] = None
         ticket["status"] = "address_prompt"
         await save_data()
-        await interaction.response.edit_message(view=None)
+        await ack_halal_interaction(interaction)
         await send_halal_address_prompt(interaction.channel, ticket)
 
 
@@ -11363,6 +11410,7 @@ async def add_halal_trader(channel, ticket, trader):
     if not ticket.get("deal_type"):
         ticket["status"] = "halal_waiting_trader"
     record_deal_started(ticket)
+    await delete_halal_keys(channel, ticket, "trader_prompt", "userid_error")
     await save_data()
     await maybe_start_halal_roles(channel, ticket)
 
@@ -11446,16 +11494,23 @@ async def choose_halal_role(interaction, role):
     ticket[key] = user_id
     complete = bool(ticket.get("sender_id") and ticket.get("receiver_id"))
     await save_data()
-    await interaction.response.edit_message(view=HalalRoleSelectionLayout(ticket))
     if complete:
         ticket["status"] = "halal_role_confirmation"
         ticket["role_confirmed"] = []
         await save_data()
+        await consume_halal_prompt(
+            interaction,
+            ticket,
+            "role_selection",
+            "role_ping"
+        )
         message = await interaction.channel.send(
             view=HalalRoleConfirmationLayout(ticket)
         )
         ticket["messages"]["role_confirmation"] = message.id
         await save_data()
+        return
+    await interaction.response.edit_message(view=HalalRoleSelectionLayout(ticket))
 
 
 async def confirm_halal_role(interaction, role):
@@ -11505,15 +11560,16 @@ async def confirm_halal_role(interaction, role):
         )
     )
     if both:
-        old = await fetch_message(
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+        await delete_halal_keys(
             interaction.channel,
-            ticket["messages"].get("role_confirmation")
+            ticket,
+            "role_confirmation"
         )
-        if old is not None:
-            try:
-                await old.edit(view=None)
-            except discord.HTTPException:
-                pass
+        await save_data()
         await send_halal_details_prompt(interaction.channel, ticket)
 
 
@@ -11543,7 +11599,9 @@ async def send_halal_details_prompt(channel, ticket):
     message = await send_halal_layout(
         channel,
         view,
-        ping=f"<@{ticket['sender_id']}>"
+        ping=f"<@{ticket['sender_id']}>",
+        ticket=ticket,
+        ping_key="details_ping"
     )
     ticket["messages"]["deal_details"] = message.id
     await save_data()
@@ -11568,7 +11626,9 @@ async def send_halal_amount_prompt(channel, ticket):
     message = await send_halal_layout(
         channel,
         view,
-        ping=f"<@{ticket['sender_id']}>"
+        ping=f"<@{ticket['sender_id']}>",
+        ticket=ticket,
+        ping_key="amount_ping"
     )
     ticket["messages"]["deal_amount"] = message.id
     await save_data()
@@ -11595,11 +11655,17 @@ async def confirm_halal_details(interaction, correct):
             "Only the other party can confirm these deal details."
         )
         return
+    await consume_halal_prompt(
+        interaction,
+        ticket,
+        "details_confirm",
+        "details_confirm_ping",
+        "deal_details",
+        "details_ping"
+    )
     if not correct:
-        await interaction.response.edit_message(view=None)
         await send_halal_details_prompt(interaction.channel, ticket)
         return
-    await interaction.response.edit_message(view=None)
     await send_halal_amount_prompt(interaction.channel, ticket)
 
 
@@ -11621,7 +11687,11 @@ async def confirm_halal_amount(interaction, correct):
         ticket["usd_amount"] = None
         ticket["usd_confirmed"] = []
         await save_data()
-        await interaction.response.edit_message(view=None)
+        await consume_halal_prompt(
+            interaction,
+            ticket,
+            "amount_confirm"
+        )
         await send_halal_amount_prompt(interaction.channel, ticket)
         return
     confirmed = list(ticket.get("usd_confirmed") or [])
@@ -11648,15 +11718,18 @@ async def confirm_halal_amount(interaction, correct):
         )
     )
     if both:
-        old = await fetch_message(
+        try:
+            await interaction.message.delete()
+        except discord.HTTPException:
+            pass
+        await delete_halal_keys(
             interaction.channel,
-            ticket["messages"].get("amount_confirm")
+            ticket,
+            "amount_confirm",
+            "deal_amount",
+            "amount_ping"
         )
-        if old is not None:
-            try:
-                await old.edit(view=None)
-            except discord.HTTPException:
-                pass
+        await save_data()
         await send_halal_payment(interaction.channel, ticket)
 
 
@@ -11815,6 +11888,12 @@ async def handle_halal_chat(message, ticket):
         ticket["usd_amount"] = str(amount)
         ticket["usd_confirmed"] = []
         ticket["status"] = "halal_amount_confirm"
+        await delete_halal_keys(
+            message.channel,
+            ticket,
+            "deal_amount",
+            "amount_ping"
+        )
         await save_data()
         confirm = await message.channel.send(view=HalalAmountLayout(ticket))
         ticket["messages"]["amount_confirm"] = confirm.id
