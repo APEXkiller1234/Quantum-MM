@@ -9939,6 +9939,16 @@ class TinyLayout(discord.ui.LayoutView):
         self.add_item(discord.ui.Container(*items, accent_colour=accent))
 
 
+async def halal_deadend(interaction, text):
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(text, ephemeral=True)
+        else:
+            await interaction.response.send_message(text, ephemeral=True)
+    except discord.HTTPException:
+        pass
+
+
 def halal_text_container(text, accent):
     view = TinyLayout(
         discord.ui.TextDisplay(text),
@@ -10120,9 +10130,9 @@ class HalalPanel(discord.ui.LayoutView):
         )
         return crypto, stables
 
-    def __init__(self):
+    def __init__(self, guild=None):
         super().__init__(timeout=None)
-        crypto_items, stable_items = self.coin_groups()
+        crypto_items, stable_items = self.coin_groups(guild)
         self.add_item(
             discord.ui.Container(*crypto_items, accent_colour=COLOR_HALAL_GREEN)
         )
@@ -10193,15 +10203,15 @@ class HalalDealTypeSelect(discord.ui.Select):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket):
-            await interaction.response.send_message(
-                "This ticket is no longer active.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "This ticket is no longer active."
             )
             return
         if int(interaction.user.id) != int(ticket.get("opener_id") or 0) and not is_admin(interaction.user):
-            await interaction.response.send_message(
-                "Only the ticket opener can select the deal type.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the ticket opener can select the deal type."
             )
             return
         if ticket.get("deal_type"):
@@ -10303,15 +10313,15 @@ class HalalResetRolesButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or ticket.get("status") != "halal_role_selection":
-            await interaction.response.send_message(
-                "Role selection is no longer active.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Role selection is no longer active."
             )
             return
         if not is_halal_party(interaction.user, ticket) and not is_admin(interaction.user):
-            await interaction.response.send_message(
-                "You cannot reset this selection.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "You cannot reset this selection."
             )
             return
         ticket["sender_id"] = None
@@ -10382,15 +10392,15 @@ class HalalReturnButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or ticket.get("status") != "halal_role_confirmation":
-            await interaction.response.send_message(
-                "This confirmation is no longer active.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "This confirmation is no longer active."
             )
             return
         if not is_halal_party(interaction.user, ticket):
-            await interaction.response.send_message(
-                "Only the two traders can use this.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the two traders can use this."
             )
             return
         await interaction.response.edit_message(view=None)
@@ -10552,9 +10562,9 @@ class HalalCopyDetailsButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-            await interaction.response.send_message(
-                "Only the two traders can use this button.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the two traders can use this button."
             )
             return
         ticket["copied_details"] = True
@@ -10580,15 +10590,15 @@ class HalalCancelDealButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-            await interaction.response.send_message(
-                "Only the two traders can cancel this deal.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the two traders can cancel this deal."
             )
             return
         if ticket.get("status") not in {"waiting_deposit", "halal_waiting_deposit"}:
-            await interaction.response.send_message(
-                "This deal can no longer be cancelled from here.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "This deal can no longer be cancelled from here."
             )
             return
         await interaction.response.send_message("Cancelling deal...", ephemeral=True)
@@ -10610,9 +10620,9 @@ class HalalCheckDepositButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-            await interaction.response.send_message(
-                "Only the two traders can use this button.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the two traders can use this button."
             )
             return
         await interaction.response.defer(ephemeral=True)
@@ -10717,15 +10727,15 @@ class HalalProceedReleaseButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
-            await interaction.response.send_message(
-                "Only the sender can release the escrow.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the sender can release the escrow."
             )
             return
         if ticket.get("status") != "trade":
-            await interaction.response.send_message(
-                "The trade is not currently ready for release.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "The trade is not currently ready for release."
             )
             return
         await interaction.response.defer()
@@ -10743,15 +10753,15 @@ class HalalProceedCancelButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-            await interaction.response.send_message(
-                "Only the two traders can cancel.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the two traders can cancel."
             )
             return
         if ticket.get("status") != "trade":
-            await interaction.response.send_message(
-                "Cancellation is not available right now.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Cancellation is not available right now."
             )
             return
         ticket["status"] = "cancellation"
@@ -10829,15 +10839,15 @@ class HalalReleaseConfirmButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
-            await interaction.response.send_message(
-                "Only the sender can confirm the release.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the sender can confirm the release."
             )
             return
         if ticket.get("status") != "release_confirmation":
-            await interaction.response.send_message(
-                "This release confirmation is no longer active.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "This release confirmation is no longer active."
             )
             return
         ticket["release_authorized"] = True
@@ -10859,9 +10869,9 @@ class HalalReleaseBackButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_sender(interaction, ticket):
-            await interaction.response.send_message(
-                "Only the sender can use this button.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the sender can use this button."
             )
             return
         ticket["status"] = "trade"
@@ -10934,9 +10944,9 @@ class HalalAddressBackButton(discord.ui.Button):
     async def callback(self, interaction):
         ticket = get_ticket(interaction.channel_id)
         if not is_halal_ticket(ticket) or not is_receiver(interaction, ticket):
-            await interaction.response.send_message(
-                "Only the receiver can use this button.",
-                ephemeral=True
+            await halal_deadend(
+                interaction,
+                "Only the receiver can use this button."
             )
             return
         ticket["receiver_address"] = None
@@ -11355,29 +11365,29 @@ async def send_halal_role_selection(channel, ticket, ping=None):
 async def choose_halal_role(interaction, role):
     ticket = get_ticket(interaction.channel_id)
     if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-        await interaction.response.send_message(
-            "Only the two traders can select roles.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "Only the two traders can select roles."
         )
         return
     if ticket.get("status") != "halal_role_selection":
-        await interaction.response.send_message(
-            "Role selection is no longer active.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "Role selection is no longer active."
         )
         return
     user_id = interaction.user.id
     if ticket.get("sender_id") == user_id or ticket.get("receiver_id") == user_id:
-        await interaction.response.send_message(
-            "You already selected a role.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "You already selected a role."
         )
         return
     key = f"{role}_id"
     if ticket.get(key):
-        await interaction.response.send_message(
-            "That role has already been selected.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "That role has already been selected."
         )
         return
     ticket[key] = user_id
@@ -11398,15 +11408,15 @@ async def choose_halal_role(interaction, role):
 async def confirm_halal_role(interaction, role):
     ticket = get_ticket(interaction.channel_id)
     if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-        await interaction.response.send_message(
-            "Only the two traders can confirm the roles.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "You are not assigned to this role slot."
         )
         return
     if ticket.get("status") != "halal_role_confirmation":
-        await interaction.response.send_message(
-            "This confirmation is no longer active.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "This confirmation is no longer active."
         )
         return
     expected = int(ticket.get(f"{role}_id") or 0)
@@ -11418,9 +11428,9 @@ async def confirm_halal_role(interaction, role):
         return
     confirmed = list(ticket.get("role_confirmed") or [])
     if interaction.user.id in confirmed:
-        await interaction.response.send_message(
-            "You already confirmed.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "You already confirmed."
         )
         return
     confirmed.append(interaction.user.id)
@@ -11519,21 +11529,21 @@ async def send_halal_amount_prompt(channel, ticket):
 async def confirm_halal_details(interaction, correct):
     ticket = get_ticket(interaction.channel_id)
     if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-        await interaction.response.send_message(
-            "Only the two traders can confirm the details.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "Only the other party can confirm these deal details."
         )
         return
     if ticket.get("status") != "halal_details_confirm":
-        await interaction.response.send_message(
-            "This confirmation is no longer active.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "This confirmation is no longer active."
         )
         return
-    if int(interaction.user.id) == int(ticket.get("sender_id") or 0) and not is_admin(interaction.user):
-        await interaction.response.send_message(
-            "The other trader must confirm these details.",
-            ephemeral=True
+    if int(interaction.user.id) == int(ticket.get("sender_id") or 0):
+        await halal_deadend(
+            interaction,
+            "Only the other party can confirm these deal details."
         )
         return
     if not correct:
@@ -11547,15 +11557,15 @@ async def confirm_halal_details(interaction, correct):
 async def confirm_halal_amount(interaction, correct):
     ticket = get_ticket(interaction.channel_id)
     if not is_halal_ticket(ticket) or not is_halal_party(interaction.user, ticket):
-        await interaction.response.send_message(
-            "Only the two traders can confirm the amount.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "Only the two traders can confirm the amount."
         )
         return
     if ticket.get("status") != "halal_amount_confirm":
-        await interaction.response.send_message(
-            "This confirmation is no longer active.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "This confirmation is no longer active."
         )
         return
     if not correct:
@@ -11567,9 +11577,9 @@ async def confirm_halal_amount(interaction, correct):
         return
     confirmed = list(ticket.get("usd_confirmed") or [])
     if interaction.user.id in confirmed:
-        await interaction.response.send_message(
-            "You already confirmed the USD amount.",
-            ephemeral=True
+        await halal_deadend(
+            interaction,
+            "You already confirmed the USD amount."
         )
         return
     confirmed.append(interaction.user.id)
@@ -11657,7 +11667,7 @@ async def handle_halal_chat(message, ticket):
                 trader = await resolve_trader(message.guild, snowflake.group(0))
         if trader is None:
             await message.channel.send(
-                "I could not find that user. Paste their UserID or mention."
+                "Could not find that Discord user."
             )
             return True
         if trader.bot or trader.id == message.author.id:
