@@ -132,7 +132,12 @@ HALAL_TOS_URL = "https://www.halalmm.com/terms" # Linked as "Terms of Service" o
 HALAL_KNOWN_SCAMS_URL = "https://www.halalmm.com/dashboard/creating-deals/known-scam" # Linked as "known scams" in the safety warning
 HALAL_HOW_USERID_URL = "https://support.discord.com/hc/en-us/articles/206346498-Where-can-I-find-my-User-Server-Message-ID"
 HALAL_WELCOME_IMAGE = "https://github.com/APEXkiller1234/Vaultix/blob/main/Welcome_Prompt.gif?raw=true" # Deal Started thumbnail
-HALAL_MASCOT_IMAGE = "https://github.com/APEXkiller1234/Vaultix/blob/main/Waiting_Anim.gif?raw=true" # Thumbnails on payment / detected / complete cards
+HALAL_MASCOT_IMAGE = "https://github.com/APEXkiller1234/Vaultix/blob/main/Waiting_Anim.gif?raw=true" # Fallback thumbnail
+HALAL_SUMMARY_IMAGE = "" # Deal Summary thumbnail. Blank uses HALAL_MASCOT_IMAGE
+HALAL_DETECTED_IMAGE = "" # Transaction Detected thumbnail. Blank uses HALAL_MASCOT_IMAGE
+HALAL_RECEIVED_IMAGE = "" # Payment Received thumbnail. Blank uses HALAL_MASCOT_IMAGE
+HALAL_RELEASED_IMAGE = "" # Payment Released thumbnail. Blank uses HALAL_MASCOT_IMAGE
+TICKET_CREATE_COOLDOWN_SECONDS = 60 # 1 minute between ticket creates per user
 
 HALAL_TICKET_CATEGORY = 0 # 0 = use TICKET_CATEGORY
 HALAL_COMPLETED_CHANNEL = 0 # 0 = use COMPLETED_TRANSACTION_CHANNEL
@@ -388,7 +393,8 @@ def default_data():
         },
         "presence": default_presence(),
         "rank_roles": [],
-        "next_halal_ticket_number": HALAL_STARTING_TICKET_NUMBER
+        "next_halal_ticket_number": HALAL_STARTING_TICKET_NUMBER,
+        "ticket_create_at": {}
     }
 
 
@@ -1220,22 +1226,26 @@ def is_admin(member):
     )
 
 
+def snowflake_or_zero(value):
+    try:
+        number = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
 def is_ticket_party(
     interaction,
     ticket
 ):
-    return interaction.user.id in {
-        int(
-            ticket[
-                "opener_id"
-            ]
-        ),
-        int(
-            ticket[
-                "trader_id"
-            ]
-        )
-    }
+    try:
+        user_id = int(interaction.user.id)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return user_id in {
+        snowflake_or_zero(ticket.get("opener_id")),
+        snowflake_or_zero(ticket.get("trader_id"))
+    } - {0}
 
 
 def is_sender(
@@ -6119,21 +6129,10 @@ async def close_ticket_channel(
         channel
     )
 
-    opener = guild.get_member(
-        int(
-            ticket[
-                "opener_id"
-            ]
-        )
-    )
-
-    trader = guild.get_member(
-        int(
-            ticket[
-                "trader_id"
-            ]
-        )
-    )
+    opener_id = snowflake_or_zero(ticket.get("opener_id"))
+    trader_id = snowflake_or_zero(ticket.get("trader_id"))
+    opener = guild.get_member(opener_id) if opener_id else None
+    trader = guild.get_member(trader_id) if trader_id else None
 
     try:
         await transcript_channel.send(
@@ -6371,6 +6370,14 @@ class RequestModal(
 
             return
 
+        wait = ticket_create_wait(interaction.user.id)
+        if wait > 0:
+            await interaction.followup.send(
+                cooldown_ticket_text(wait),
+                ephemeral=True
+            )
+            return
+
         category = await get_ticket_category(
             interaction.guild
         )
@@ -6482,6 +6489,7 @@ class RequestModal(
         ] = ticket
 
         await save_data()
+        await mark_ticket_created(opener.id)
 
         opener_message = await channel.send(
             view=TicketOpenerLayout(
@@ -7325,7 +7333,7 @@ class TranscriptLogLayout(
                 ),
                 discord.ui.TextDisplay(
                     f"{trader_name}\n"
-                    f"ID: `{ticket['trader_id']}`\n"
+                    f"ID: `{ticket.get('trader_id') or 'N/A'}`\n"
                     "Trade info:\n"
                     "```"
                     f"{safe_code_text(ticket['trader_side'])}"
@@ -8704,33 +8712,9 @@ class CancellationView(
 
             await save_data()
 
-            proceed_message = await fetch_message(
-                interaction.channel,
-                ticket[
-                    "messages"
-                ].get(
-                    "proceed"
-                )
-            )
-
-            kwargs = {
-                "content": (
-                    f"{emoji_text(GREEN_TICK_EMOJI)}"
-                    "Trade Resumed"
-                )
-            }
-
-            if proceed_message is not None:
-                kwargs[
-                    "reference"
-                ] = proceed_message
-
-                kwargs[
-                    "mention_author"
-                ] = False
-
             await interaction.followup.send(
-                **kwargs
+                f"{emoji_text(GREEN_TICK_EMOJI)}"
+                "Trade Resumed"
             )
 
         elif cancel_done:
@@ -9872,6 +9856,38 @@ def mention_or_none(user_id):
     return f"<@{int(user_id)}>"
 
 
+def ticket_create_wait(user_id):
+    stored = DATA.get("ticket_create_at")
+    last = 0
+    if isinstance(stored, dict):
+        try:
+            last = float(stored.get(str(user_id)) or 0)
+        except (TypeError, ValueError):
+            last = 0
+    remaining = int(TICKET_CREATE_COOLDOWN_SECONDS) - (time.time() - last)
+    if remaining <= 0:
+        return 0
+    return max(1, int(remaining + 0.999))
+
+
+async def mark_ticket_created(user_id):
+    async with DATA_LOCK:
+        DATA.setdefault("ticket_create_at", {})[str(user_id)] = int(time.time())
+        save_data_now()
+
+
+def cooldown_ticket_text(seconds):
+    return f"Please wait **{int(seconds)}s** before creating another ticket."
+
+
+def halal_image(*urls):
+    for url in urls:
+        text = cleaned_secret(url)
+        if text:
+            return text
+    return cleaned_secret(HALAL_MASCOT_IMAGE)
+
+
 def party_ids(ticket):
     ids = set()
     for key in ("opener_id", "trader_id", "sender_id", "receiver_id"):
@@ -10207,11 +10223,21 @@ class HalalCloseButton(discord.ui.Button):
             )
             return
         await interaction.response.send_message("Closing ticket...", ephemeral=True)
-        await close_ticket_channel(
-            interaction.channel,
-            ticket,
-            f"Halal ticket closed by {interaction.user}"
-        )
+        try:
+            await close_ticket_channel(
+                interaction.channel,
+                ticket,
+                f"Halal ticket closed by {interaction.user}"
+            )
+        except Exception:
+            logger.exception("Failed to close Halal ticket")
+            try:
+                await interaction.followup.send(
+                    "Could not close this ticket. Try again.",
+                    ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
 
 
 class HalalCloseView(discord.ui.View):
@@ -10817,7 +10843,7 @@ class HalalInvoiceLayout(discord.ui.LayoutView):
                 "Refer to this deal summary for any reaffirmations. "
                 "Notify staff for any support required."
             ),
-            HALAL_MASCOT_IMAGE
+            halal_image(HALAL_SUMMARY_IMAGE)
         )
         for field in (
             f"**Sender:** <@{ticket['sender_id']}>",
@@ -11257,7 +11283,7 @@ def detected_layout(ticket):
         f"**Required Confirmations**\n`{needed}`"
     )
     return TinyLayout(
-        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        *with_optional_thumb(text, halal_image(HALAL_DETECTED_IMAGE)),
         accent=COLOR_HALAL_ORANGE
     )
 
@@ -11280,7 +11306,7 @@ def received_layout(ticket):
         f"**Amount Received**\n`{amount}` {coin.get('short')} (`{usd}` USD)"
     )
     return TinyLayout(
-        *with_optional_thumb(text, HALAL_MASCOT_IMAGE),
+        *with_optional_thumb(text, halal_image(HALAL_RECEIVED_IMAGE)),
         accent=COLOR_HALAL_GREEN
     )
 
@@ -11316,6 +11342,13 @@ async def start_halal_ticket(interaction, coin_key):
     if interaction.guild is None:
         await interaction.response.send_message(
             "Tickets can only be created inside a server.",
+            ephemeral=True
+        )
+        return
+    wait = ticket_create_wait(interaction.user.id)
+    if wait > 0:
+        await interaction.response.send_message(
+            cooldown_ticket_text(wait),
             ephemeral=True
         )
         return
@@ -11400,6 +11433,7 @@ async def start_halal_ticket(interaction, coin_key):
     }
     DATA["tickets"][str(channel.id)] = ticket
     await save_data()
+    await mark_ticket_created(opener.id)
 
     website = halal_md_link("website", HALAL_WEBSITE_URL)
     coin_emoji = coin.get("emoji") or ""
